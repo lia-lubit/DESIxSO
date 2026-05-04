@@ -1,5 +1,6 @@
 likelihood:
   SO_x_DESI_Likelihood:
+    python_class: SO_x_DESI_Likelihood
     data_specs:
       binsize: 50
       cmb_noise_phi:

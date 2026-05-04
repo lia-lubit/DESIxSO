@@ -1,5 +1,6 @@
 likelihood:
   SO_x_DESI_Likelihood:
+    python_class: SO_x_DESI_Likelihood
     data_specs:
       binsize: 50
       cmb_noise_phi:
@@ -3044,7 +3045,6 @@ likelihood:
         - !!binary |
           oiZRG1Azzz4=
       source_data_var_name: HSC_dist_0_3_bin1
-    python_class: __main__.SO_x_DESI_Likelihood
 output: chains/cobaya_so_x_desi_forecast_single_bin
 params:
   Omega_b: 0.045
