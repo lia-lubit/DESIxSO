@@ -1,8 +1,8 @@
 #Cobaya!
 
 likelihood:
-  SO_x_DESI_Likelihood.SO_x_DESI_Likelihood:
-    python_path: ["likelihoods"]
+  functions_and_classes.SO_x_DESI_Likelihood:
+    python_path: "likelihoods"
 
     data_specs:
       f_sky: 0.4
@@ -124,7 +124,7 @@ params:
 
   Omega_k: 0.0
 
-# sampler settings
+# sampler settingsF
 sampler:
   mcmc:
     Rminus1_stop: 0.01
@@ -133,8 +133,7 @@ sampler:
     seed: 12345
 
 # theory
-theory:
-  camb: {}
+theory: {}
 
 # result
 output: chains/cobaya_so_x_desi_forecast_single_bin

@@ -37,6 +37,9 @@ from cobaya.likelihood import Likelihood
 import getdist
 from getdist import plots, MCSamples
 
+import os
+print("LOADING FILE:", os.path.abspath(__file__))
+
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ## FUNCTIONS
@@ -847,12 +850,11 @@ class SO_x_DESI_Likelihood(Likelihood):
         # retrieve lens and source data arrays dynamically.
         # these are expected to be available as global variables in the notebook
         # and their names are passed via data_specs
-        lens_data_var_name = self.data_specs.get('lens_data_var_name', 'DESI_lens_data')
-        source_data_var_name = self.data_specs.get('source_data_var_name', 'HSC_dist_0_3')
-        self.lens_data = eval(lens_data_var_name)
-        self.source_data = eval(source_data_var_name)
-        print(f"  Using lens data from global variable: {lens_data_var_name}")
-        print(f"  Using source data from global variable: {source_data_var_name}")
+        self.lens_data = np.load(self.data_specs['lens_data_path'])
+        self.source_data = np.load(self.data_specs['source_data_path'])
+
+        print(f"  Loaded lens data from {self.data_specs['lens_data_path']}")
+        print(f"  Loaded source data from: {self.data_specs['source_data_path']}")
 
         # New: Check for pre-computed data vector and covariance matrix paths
         self.data_vector_path = self.data_specs.get('data_vector_path')
@@ -957,13 +959,36 @@ class SO_x_DESI_Likelihood(Likelihood):
 
     # get dictionary of required likelihood params
     def get_requirements(self):
-        return {'CCL': {'pk_lin': {}, 'pk_nonlin': {}}}
+        return {}
 
     def logp(self, **kwargs):
         # Cobaya passes parameters as keyword arguments. `ccl_data` contains the ccl.Cosmology object.
-        ccl_data = kwargs['CCL']
-        current_cosmology = ccl_data.get_cosmology()
+        #ccl_data = kwargs['CCL']
+        #current_cosmology = ccl_data.get_cosmology()
 
+        Omega_m = kwargs['Omega_m']
+        Omega_b = kwargs['Omega_b']
+        h = kwargs['h']
+        sigma8 = kwargs['sigma8']
+        n_s = kwargs['n_s']
+        w0 = kwargs['w0']
+        wa = kwargs['wa']
+        Omega_k = kwargs['Omega_k']
+        
+        Omega_c = Omega_m - Omega_b
+        
+        current_cosmology = ccl.Cosmology(
+            Omega_c=Omega_c,
+            Omega_b=Omega_b,
+            h=h,
+            sigma8=sigma8,
+            n_s=n_s,
+            w0=w0,
+            wa=wa,
+            Omega_k=Omega_k,
+            transfer_function='bbks'
+        )
+        
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(2, self.n_ell + 2) # unbinned ells
         lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
