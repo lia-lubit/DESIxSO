@@ -36,28 +36,36 @@ likelihood:
 # parameters
 params:
 
-  Omega_m:
+  'Omega_m':
     prior:
       dist: norm
-      loc: 0.3
-      scale: 0.025
-    ref: 0.3
-    proposal: 0.01
+      loc: 0.316
+      scale: 0.015
+    ref:
+      dist: norm
+      loc: 0.316
+      scale: 0.005  # tight distribution around the center
+    proposal: 0.005
     latex: "\\Omega_m"
 
-  # 'Omega_m': 0.3, # fixed
+#'Omega_m': 0.316, # fixed
 
-  # 'sigma8':
-  #   prior:
-  #     dist: norm
-  #     loc: 0.8
-  #     scale: 0.05
-  #   ref: 0.8
-  #   proposal: 0.01
-  #   latex: "\\sigma_8"
+  'sigma8':
+    prior:
+      dist: norm
+      loc: 0.8
+      scale: 0.05
+    ref:
+      dist: norm
+      loc: 0.8
+      scale: 0.01
+    proposal: 0.01
+    latex: "\\sigma_8"
 
-  sigma8: 0.8
+  #sigma8: 0.8
 
+#### CHANGE THE LATER PARAMS BEFORE RUNNING THIS WITH MORE OF THEM UNFIXED 
+#### I expect I'll need to modify the scales etc -- I made things too large to begin with.
   # 'h':
   #   prior:
   #     dist: norm
@@ -137,4 +145,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_single_bin
+output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma_8
