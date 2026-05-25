@@ -1,53 +1,26 @@
 COBAYA PROJECT TODO LIST
 
-1. Create project folder structure
-   - utils.py
-   - so_x_desi_likelihood.py
-   - likelihood.yaml
-   - data/ folder
+1. Make trace and corner plot functions in functions_and_classes.py to make this clean
+2. Make covariance and data saving function?
 
-2. Move helper functions into utils.py
-   - ForecastMap
-   - build_covariance_from_data
-   - build_tracers_from_data
-   - build_tracer_dict
-   - build_noise_dict
-   - build_spectra_dict
-   - any other helper / physics functions
+Figure out what is making the calculation take a long time
+1. probably its making the power spectra
+2. have more chains -- order 10 (also good to figure out how to make multiple chains and use different cores)
+3. emulators exist which make this faster -- consider using this
+4. we think that were insensitive to the power spectra, we could not recalculate the power spectra, assuming that it'll fall out
+-- this is sketchy and eventually will stop working
+5. cosmopower
+6. marco bonicci
 
-3. Remove notebook dependencies
-   - Remove eval(...)
-   - Remove all global variables (DESI_lens_data, etc.)
-   - Ensure everything comes from imports or file paths
+we think were only sensitive to sigma8
+we should see sigma8 be very unconstrained and the omegam be constrained more tightly
 
-4. Save all data to disk (.npy files)
-   - lens_data → data/lens.npy
-   - source_data → data/source.npy
-   - covariance_matrix → data/covariance.npy
-   - observed_data_vector → data/data_vector.npy
+change prior to uniform prior from Gaussian
 
-5. Load data inside likelihood class (NOT notebook)
-   - Use np.load(self.data_specs["..._path"])
 
-6. Create so_x_desi_likelihood.py
-   - Import Likelihood, numpy, ccl
-   - Import everything from utils.py
-   - Define SO_x_DESI_Likelihood class only
+1. spawn more chains
+2. use emulator to make power spectrum calculators faster -- cosmopower emulator (read paper and use emulator)
+3. change to uniform prior
+4. run for omega_m and sigma_8 --> if lensing ratios are working as we think, we should not be constraining sigma8 at all (or a_s)
 
-7. Create likelihood.yaml
-   - Define python_class: SO_x_DESI_Likelihood
-   - Set python_path: .
-   - Provide data_specs (file paths + constants)
-   - Define sampler settings
-
-8. Test imports BEFORE running Cobaya
-   - from so_x_desi_likelihood import SO_x_DESI_Likelihood
-   - import utils
-
-9. Run Cobaya
-   - cobaya-run likelihood.yaml
-
-10. Debug if needed
-   - Check file paths
-   - Check module imports
-   - Check array shapes (data vector vs covariance)
+once we do this, we can start exploring different configurations and start seeing which ones are most interesting and start analyzing data
