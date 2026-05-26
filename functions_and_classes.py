@@ -181,7 +181,7 @@ def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_le
 
 # build tracer dictionary
 def build_tracer_dict(lens_tracers, lensing_tracers, cmb_tracer):
-    tracer_dict = {'phi': cmb_tracer}
+    tracer_dict = {'kappa': cmb_tracer}
 
     for i, tr in enumerate(lens_tracers):
         tracer_dict[f'g{i+1}'] = tr
@@ -191,7 +191,7 @@ def build_tracer_dict(lens_tracers, lensing_tracers, cmb_tracer):
     return tracer_dict
 
 # build noise dictionary
-def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_phi=None):
+def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None):
     noise_dict = {}
 
     if shot_noise_lens is not None:
@@ -206,9 +206,9 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
             # Make it an ell-dependent array for consistent addition
             noise_dict[(f'l{i}', f'l{i}')] = np.ones_like(ells) * shape_noise_source[i-1]
 
-    if cmb_noise_phi is not None:
-        # assuming cmb_noise_phi is already an ell-dependent array
-        noise_dict[('phi','phi')] = cmb_noise_phi
+    if cmb_noise_kappa is not None:
+        # assuming cmb_noise_kappa is already an ell-dependent array
+        noise_dict[('kappa','kappa')] = cmb_noise_kappa
 
     return noise_dict
 
@@ -253,12 +253,12 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
     all_pairs = []
 
     def _canonicalize_pair(p1, p2):
-        # Ensures consistent ordering, e.g., ('phi', 'g1') instead of ('g1', 'phi')
+        # Ensures consistent ordering, e.g., ('kappa', 'g1') instead of ('g1', 'kappa')
         # This matches the logic in ForecastMap._process_desired_pairs
         return (p1, p2) if p1 < p2 else (p2, p1)
 
     if 'CC' in desired_spectra:
-        all_pairs.append(('phi', 'phi'))
+        all_pairs.append(('kappa', 'kappa'))
 
     if 'GG' in desired_spectra:
         for i in range(1, n_lens_bins + 1):
@@ -277,11 +277,11 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
 
     if 'CG' in desired_spectra: # Lens Galaxy-CMB Lensing (from Lens galaxies to CMB lensing)
         for i in range(1, n_lens_bins + 1):
-            all_pairs.append(_canonicalize_pair(f'g{i}', 'phi'))
+            all_pairs.append(_canonicalize_pair(f'g{i}', 'kappa'))
 
     if 'CL' in desired_spectra: # CMB-Source Lensing (from CMB lensing to Source galaxies)
         for i in range(1, n_source_bins + 1):
-            all_pairs.append(_canonicalize_pair(f'l{i}', 'phi'))
+            all_pairs.append(_canonicalize_pair(f'l{i}', 'kappa'))
 
     # Remove duplicates (though with the current logic, there shouldn't be any)
     # and ensure it's a list of tuples
@@ -297,7 +297,7 @@ def build_covariance_from_data(
     binsize=1,  # New parameter for binning
     shot_noise_lens=None,
     shape_noise_source=None,
-    cmb_noise_phi=None,
+    cmb_noise_kappa=None,
     magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
     desired_spectra=None
 ):
@@ -316,7 +316,7 @@ def build_covariance_from_data(
     # build spectra
     lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-    noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
+    noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kappa)
     spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
@@ -394,8 +394,8 @@ def plot_covariance_matrix(
         if label_a in ['T', 'E'] and label_b in ['T', 'E']:
             tick_labels.append(fr'$C^{{{label_a}{label_b}}}$')
 
-        elif label_a == 'phi' and label_b == 'phi':
-            tick_labels.append(fr'$C^{{\phi\phi}}$')
+        elif label_a == 'kappa' and label_b == 'kappa':
+            tick_labels.append(fr'$C^{{\kappa\kappa}}$')
 
         elif label_a.startswith('g') and label_b.startswith('g'):
             sa = label_a.replace('g', 'g_')
@@ -407,13 +407,13 @@ def plot_covariance_matrix(
             sb = label_b.replace('l', 'l_')
             tick_labels.append(fr'$C^{{{sa}{sb}}}$')
 
-        elif (label_a.startswith('g') or label_a.a.startswith('l')) and label_b == 'phi':
+        elif (label_a.startswith('g') or label_a.a.startswith('l')) and label_b == 'kappa':
             sa = label_a.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}\phi}}$')
+            tick_labels.append(fr'$C^{{{sa}\kappa}}$')
 
-        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'phi':
+        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'kappa':
             sb = label_b.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{\phi{sb}}}$')
+            tick_labels.append(fr'$C^{{\kappa{sb}}}$')
 
         else:  # lens-lensing, or general case
             sa = label_a.replace('g', 'g_').replace('l', 'l_')
@@ -511,8 +511,8 @@ def plot_correlation_matrix(
         tick_positions.append(k * n_ell_binned + n_ell_binned / 2)
         label_a, label_b = pairs_to_plot[k]
         # format labels nicely, handling CMB specific ones and numerical ones
-        if label_a == 'phi' and label_b == 'phi':
-            tick_labels.append(r'$C^{\phi\phi}$')
+        if label_a == 'kappa' and label_b == 'kappa':
+            tick_labels.append(r'$C^{\kappa\kappa}$')
 
         elif label_a.startswith('g') and label_b.startswith('g'):
             sa = label_a.replace('g', 'g_')
@@ -524,13 +524,13 @@ def plot_correlation_matrix(
             sb = label_b.replace('l', 'l_')
             tick_labels.append(fr'$C^{{{sa}{sb}}}$')
 
-        elif (label_a.startswith('g') or label_a.startswith('l')) and label_b == 'phi':
+        elif (label_a.startswith('g') or label_a.startswith('l')) and label_b == 'kappa':
             sa = label_a.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}\phi}}$')
+            tick_labels.append(fr'$C^{{{sa}\kappa}}$')
 
-        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'phi':
+        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'kappa':
             sb = label_b.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{\phi{sb}}}$')
+            tick_labels.append(fr'$C^{{\kappa{sb}}}$')
 
         else:  # lens-lensing, or general case
             sa = label_a.replace('g', 'g_').replace('l', 'l_')
@@ -631,7 +631,7 @@ class ForecastMap:
         p = []
 
         # CMB spectra
-        p += [('phi','phi')]
+        p += [('kappa','kappa')]
 
         # Lens galaxies auto/cross -- not zero indexing because of convention
         for i in range(1, self.n_lens + 1):
@@ -650,11 +650,11 @@ class ForecastMap:
 
         # Lens galaxies -- CMB lensing cross
         for i in range(1, self.n_lens + 1):
-            p.append((f'g{i}', 'phi'))
+            p.append((f'g{i}', 'kappa'))
 
         # Galaxy lensing -- CMB lensing cross
         for j in range(1, self.n_src + 1):
-            p.append((f'l{j}', 'phi'))
+            p.append((f'l{j}', 'kappa'))
 
         return p
 
@@ -845,7 +845,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         # noise parameters, also sourced from data_specs, with default 'None'
         self.shot_noise_lens = self.data_specs.get('shot_noise_lens', None)
         self.shape_noise_source = self.data_specs.get('shape_noise_source', None)
-        self.cmb_noise_phi = self.data_specs.get('cmb_noise_phi', None)
+        self.cmb_noise_kappa = self.data_specs.get('cmb_noise_kappa', None)
 
         # retrieve lens and source data arrays dynamically.
         # these are expected to be available as global variables in the notebook
@@ -920,7 +920,7 @@ class SO_x_DESI_Likelihood(Likelihood):
                     binsize=self.binsize,
                     shot_noise_lens=self.shot_noise_lens,
                     shape_noise_source=self.shape_noise_source,
-                    cmb_noise_phi=self.cmb_noise_phi,
+                    cmb_noise_kappa=self.cmb_noise_kappa,
                     magnification_bias_lenses=self.magnification_bias_lenses,
                     desired_spectra=self.desired_spectra
                 )
@@ -994,7 +994,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict)
 
         # flatten the current Cls into a model data vector 'M'
