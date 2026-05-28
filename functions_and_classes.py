@@ -607,6 +607,44 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
         plt.show()
 
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
+## CosmoPower
+
+# get A_s from sigma8
+def get_linear_As(cosmology):
+    
+    A_s_val = cosmology['A_s']
+    if not np.isnan(A_s_val):
+        return A_s_val
+        
+    # if A_s is missing, extract the target sigma8
+    target_sigma8 = cosmology['sigma8']
+    
+    # instantiate a clean, minimal baseline model using a fiducial A_s
+    # this captures the exact transfer function shape for these specific parameters
+    fiducial_As = 2.0e-9
+    
+    base_params = ccl.Cosmology(
+        Omega_c=cosmology['Omega_c'],
+        Omega_b=cosmology['Omega_b'],
+        h=cosmology['h'],
+        n_s=cosmology['n_s'],
+        A_s=fiducial_As,
+        transfer_function='boltzmann_camb',
+        matter_power_spectrum='linear'
+    )
+    
+    # calculate the variance resulting from the baseline amplitude
+    fiducial_sigma8 = ccl.sigma8(base_params)
+
+    #### CONFIRM THIS DERIVATION
+    # A_s is proportional to sigma8 ^ 2
+    # exact analytical rescaling: As = As_fid * (sigma8_target / sigma8_fid)^2
+    As = fiducial_As * (target_sigma8 / fiducial_sigma8) ** 2
+    return As
+
+# -------------------------------------------------------------------------------------------------------------------------------------------- #
+# -------------------------------------------------------------------------------------------------------------------------------------------- #
+# -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ## CLASSES
 # we need to figure out what spectra and spectra pairs must be calculated for any given data set and number of ells
