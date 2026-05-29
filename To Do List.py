@@ -2,6 +2,8 @@ COBAYA PROJECT TODO LIST
 1. Confirm P(k) emulator is working
 2. get from P(k) emulator to relevant spectra
 3. test time diff and accuracy diff from PyCCL
+3.5. Should I be using weaklensingtraer for all my galaxy source bins?
+3.6. Change everything to use A_s instead of sigma8
 4. build this into Cobaya -- new likelihood?
 5. spawn more chains and use NERSC exclusive node
 6. rerun omega_m and check results

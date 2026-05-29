@@ -7,9 +7,11 @@ import os
 import sys
 import inspect
 import yaml
+import time
 
 # scientific stack
 import numpy as np
+import jax.numpy as jnp
 import scipy
 from scipy.interpolate import interp1d
 from scipy.stats import linregress
@@ -22,6 +24,8 @@ from astropy.cosmology import LambdaCDM, w0waCDM
 import pyccl as ccl
 import camb
 from camb import model, initialpower
+import classy
+from cosmopower_jax.cosmopower_jax import CosmoPowerJAX as CPJ
 
 # plotting
 import matplotlib.pyplot as plt
@@ -34,10 +38,11 @@ from mpl_toolkits.mplot3d import Axes3D
 import cobaya
 from cobaya.run import run as cobaya_run
 from cobaya.likelihood import Likelihood
+#from cobaya_utilities import tools -- this wont import, but I don't use it at the momment anyway
 import getdist
 from getdist import plots, MCSamples
+from getdist.mcsamples import loadMCSamples
 
-import os
 print("LOADING FILE:", os.path.abspath(__file__))
 
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
@@ -130,6 +135,8 @@ def calculate_Cls(
         cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values)
         cl_spectra[f'CC'] = cl
 
+    return cl_spectra
+    
 # calcualte and plot angular power spectra
 def calculate_and_plot_Cls(
     cosmology,        # ccl.Cosmology object
@@ -916,6 +923,94 @@ def calculate_Cls_w_emulator(
         cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
         cl_spectra[f'CC'] = cl
 
+    return cl_spectra
+
+# create full Pk2D object from our emulator
+# non-linear P(k) = linear P(k) * boost
+def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
+
+    # the emulator isn't trained past z = 15, and might not be well trained there either
+    if z_arr is None:
+        z_arr = np.linspace(0, 10, 500)
+
+    # make grids with our wavelength and redshift values that we'll run the emulator on
+    # sort redshifts in descending order so that scale factors 'a' are ascending
+    z_sorted_descending = np.sort(z_arr)[::-1] 
+    a_arr = 1.0 / (1.0 + z_sorted_descending)
+    lk_arr = np.log(linear_emulator.modes)            
+    pk_arr = np.zeros((len(a_arr), len(lk_arr)))
+
+    if boost_emulator == None:
+        for i, z in enumerate(z_sorted_descending):
+            pk_arr[i, :] = predict_linear_Pk(cosmology, linear_emulator, z)
+
+    else:        
+        # loop through all the redshifts and fill in the full P(k) for each 
+        # note that we don't need to explicitly cycle through the k's because we can just past the whole 1D array
+        for i, z in enumerate(z_sorted_descending):
+            linear_Pk = predict_linear_Pk(cosmology, linear_emulator, z)
+            boost_Pk = predict_boost_Pk(cosmology, boost_emulator, z, cmin, eta_0)
+            non_linear_Pk = linear_Pk * boost_Pk
+            pk_arr[i, :] = non_linear_Pk
+            
+    Pk2D = ccl.Pk2D(
+        a_arr=a_arr,
+        lk_arr=lk_arr,
+        pk_arr=pk_arr,
+        is_logp=False,         # keep False unless your emulator outputs ln(P)
+        extrap_order_lok=1,    # linear extrapolation for low-k
+        extrap_order_hik=2     # quadratic extrapolation for high-k
+    )
+    
+    return Pk2D
+
+# create a P(k) given a general cosmology
+
+# take in a cosmology, and emulator, and a z value and predict the P(k) using the emulator
+# output a 1D array or P(k) values for given k
+def predict_linear_Pk(cosmology, emulator, z):
+
+    h = cosmology.cosmo.params.h
+    h2 = h ** 2
+
+    # cosmology objects have either sigma8 or As, but the emulator needs the latter
+    A_s_val = cosmology.cosmo.params.A_s
+        
+    # each param must be passed as an array
+    params = {
+        'omega_b': np.array([cosmology.cosmo.params.Omega_b * h2]),
+        'omega_cdm': np.array([cosmology.cosmo.params.Omega_c * h2]),
+        'h': np.array([h]),
+        'n_s': np.array([cosmology.cosmo.params.n_s]),
+        'ln10^{10}A_s': np.array([np.log(A_s_val * 1e10)]),
+        'z': np.array([z]),
+    }
+
+    Pk = emulator.predict(params)
+    return Pk
+
+def predict_boost_Pk(cosmology, emulator, z, cmin, eta_0):
+
+    h = cosmology.cosmo.params.h
+    h2 = h ** 2
+
+    # cosmology objects have either sigma8 or As, but the emulator needs the latter
+    A_s_val = cosmology.cosmo.params.A_s
+        
+    # each param must be passed as an array
+    params = {
+        'omega_b': np.array([cosmology.cosmo.params.Omega_b * h2]),
+        'omega_cdm': np.array([cosmology.cosmo.params.Omega_c * h2]),
+        'h': np.array([h]),
+        'n_s': np.array([cosmology.cosmo.params.n_s]),
+        'ln10^{10}A_s': np.array([np.log(A_s_val * 1e10)]),
+        'cmin': np.array([cmin]),
+        'eta_0': np.array([eta_0]),
+        'z': np.array([z]),
+    }
+        
+    Pk = emulator.predict(params)
+    return Pk
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
