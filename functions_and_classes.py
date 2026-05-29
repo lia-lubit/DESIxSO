@@ -44,6 +44,92 @@ print("LOADING FILE:", os.path.abspath(__file__))
 
 ## FUNCTIONS
 
+# calculate angular power spectra
+def calculate_Cls(
+    cosmology,        # ccl.Cosmology object
+    source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
+    lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+):
+
+    # extract lens and source redshift grids and distributions
+    z_lens_grid = lens_data[:, 0]
+    n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
+    num_lens_bins = len(n_lens_dists)
+    z_source_grid = source_data[:, 0]
+    n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
+    num_source_bins = len(n_source_dists)
+    z_CMB = 1090
+
+    # initialize ccl.NumberCountsTracer for each lens and source bin
+    lens_tracers_nc = []
+    lensing_tracers_nc = []
+    for i, n_z_lens_bin in enumerate(n_lens_dists):
+        # use a constant linear bias of 1
+        bias_values = np.ones_like(z_lens_grid)
+        tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                        dndz=(z_lens_grid, n_z_lens_bin),
+                                        bias=(z_lens_grid, bias_values))
+        lens_tracers_nc.append(tracer)
+    for i, n_z_source_bin in enumerate(n_source_dists):
+            # use a constant linear bias of 1
+            bias_values = np.ones_like(z_source_grid)
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                            dndz=(z_source_grid, n_z_source_bin),
+                                            bias=(z_source_grid, bias_values))
+            lensing_tracers_nc.append(tracer)
+
+    # create CMB lensing tracerrs
+    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+
+    # define common range of multipoles and a dictionary
+    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    cl_spectra = {}
+
+    # generate a colormap for distinct colors
+    colors = cm.get_cmap('tab20', num_lens_bins ** 2)
+    color_idx = 0
+
+    # Lens galaxy-Lens galaxy auto-corr spectra
+    if 'GG' in correlation_types:
+        for i in range(num_lens_bins):
+            for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values)
+                cl_spectra[f'GG{i+1}_{k+1}'] = cl
+
+
+    # galaxy lensing-galaxy lensing auto-corr spectra
+    if 'LL' in correlation_types:
+        for i in range(num_source_bins):
+            for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values)
+                cl_spectra[f'LL{i+1}_{k+1}'] = cl
+
+
+    # galaxy-galaxy lensing cross-corr spectra
+    if 'GL' in correlation_types:
+        for i in range (num_source_bins):
+            for k in range(num_lens_bins):
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values)
+                cl_spectra[f'GL{i+1}_{k+1}'] = cl
+
+    # CMB lensing-galaxy lensing cross-corr spectra
+    if 'CL' in correlation_types:
+        for j in range(num_source_bins):
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values)
+            cl_spectra[f'CL{j+1}'] = cl
+
+    # CMB lensing-lens galaxies cross-corr spectra
+    if 'CG' in correlation_types:
+        for j in range(num_lens_bins):
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values)
+            cl_spectra[f'CG{j+1}'] = cl
+
+    # CMB lensing-CMB lensing auto-corr spectra
+    if 'CC' in correlation_types:
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values)
+        cl_spectra[f'CC'] = cl
+
 # calcualte and plot angular power spectra
 def calculate_and_plot_Cls(
     cosmology,        # ccl.Cosmology object
@@ -641,6 +727,194 @@ def get_linear_As(cosmology):
     # exact analytical rescaling: As = As_fid * (sigma8_target / sigma8_fid)^2
     As = fiducial_As * (target_sigma8 / fiducial_sigma8) ** 2
     return As
+
+# pass non-linear Pk2D object to PyCCL and generate and plot power spectra
+def calculate_and_plot_Cls_w_emulator(
+    cosmology,        # ccl.Cosmology object
+    source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
+    lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
+    Pk2D_object,        # previously built Pk2D object
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+):
+
+    # extract lens and source redshift grids and distributions
+    z_lens_grid = lens_data[:, 0]
+    n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
+    num_lens_bins = len(n_lens_dists)
+    z_source_grid = source_data[:, 0]
+    n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
+    num_source_bins = len(n_source_dists)
+    z_CMB = 1090
+
+    # initialize ccl.NumberCountsTracer for each lens and source bin
+    lens_tracers_nc = []
+    lensing_tracers_nc = []
+    for i, n_z_lens_bin in enumerate(n_lens_dists):
+        # use a constant linear bias of 1
+        bias_values = np.ones_like(z_lens_grid)
+        tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                        dndz=(z_lens_grid, n_z_lens_bin),
+                                        bias=(z_lens_grid, bias_values))
+        lens_tracers_nc.append(tracer)
+    for i, n_z_source_bin in enumerate(n_source_dists):
+            # use a constant linear bias of 1
+            bias_values = np.ones_like(z_source_grid)
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                            dndz=(z_source_grid, n_z_source_bin),
+                                            bias=(z_source_grid, bias_values))
+            lensing_tracers_nc.append(tracer)
+
+    # create CMB lensing tracerrs
+    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+
+    # define common range of multipoles and a dictionary
+    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    cl_spectra = {}
+
+    # generate a colormap for distinct colors
+    colors = cm.get_cmap('tab20', num_lens_bins ** 2)
+    color_idx = 0
+
+    # Lens galaxy-Lens galaxy auto-corr spectra
+    if 'GG' in correlation_types:
+        for i in range(num_lens_bins):
+            for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GG{i+1}_{k+1}'] = cl
+
+
+    # galaxy lensing-galaxy lensing auto-corr spectra
+    if 'LL' in correlation_types:
+        for i in range(num_source_bins):
+            for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'LL{i+1}_{k+1}'] = cl
+
+
+    # galaxy-galaxy lensing cross-corr spectra
+    if 'GL' in correlation_types:
+        for i in range (num_source_bins):
+            for k in range(num_lens_bins):
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GL{i+1}_{k+1}'] = cl
+
+    # CMB lensing-galaxy lensing cross-corr spectra
+    if 'CL' in correlation_types:
+        for j in range(num_source_bins):
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CL{j+1}'] = cl
+
+    # CMB lensing-lens galaxies cross-corr spectra
+    if 'CG' in correlation_types:
+        for j in range(num_lens_bins):
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CG{j+1}'] = cl
+
+    # CMB lensing-CMB lensing auto-corr spectra
+    if 'CC' in correlation_types:
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+        cl_spectra[f'CC'] = cl
+
+    # plot all calculated Cl spectra
+    plt.figure(figsize=(12, 8))
+    for key, cl_values in cl_spectra.items():
+        plt.loglog(ell_values, cl_values, label=key, color=colors(color_idx % colors.N))
+        color_idx += 1
+
+    plt.xlabel(r'Multipole, $\ell$')
+    plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
+    plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
+    plt.legend(loc='best', fontsize='small', bbox_to_anchor=(1.05, 1))
+    plt.grid(True, which="both", ls="-")
+    plt.tight_layout()
+    plt.show()
+    
+# pass non-linear Pk2D object to PyCCL and generate power spectra
+def calculate_Cls_w_emulator(
+    cosmology,        # ccl.Cosmology object
+    source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
+    lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
+    Pk2D_object,        # previously built Pk2D object
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+):
+
+    # extract lens and source redshift grids and distributions
+    z_lens_grid = lens_data[:, 0]
+    n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
+    num_lens_bins = len(n_lens_dists)
+    z_source_grid = source_data[:, 0]
+    n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
+    num_source_bins = len(n_source_dists)
+    z_CMB = 1090
+
+    # initialize ccl.NumberCountsTracer for each lens and source bin
+    lens_tracers_nc = []
+    lensing_tracers_nc = []
+    for i, n_z_lens_bin in enumerate(n_lens_dists):
+        # use a constant linear bias of 1
+        bias_values = np.ones_like(z_lens_grid)
+        tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                        dndz=(z_lens_grid, n_z_lens_bin),
+                                        bias=(z_lens_grid, bias_values))
+        lens_tracers_nc.append(tracer)
+    for i, n_z_source_bin in enumerate(n_source_dists):
+            # use a constant linear bias of 1
+            bias_values = np.ones_like(z_source_grid)
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                            dndz=(z_source_grid, n_z_source_bin),
+                                            bias=(z_source_grid, bias_values))
+            lensing_tracers_nc.append(tracer)
+
+    # create CMB lensing tracerrs
+    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+
+    # define common range of multipoles and a dictionary
+    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    cl_spectra = {}
+
+    # generate a colormap for distinct colors
+    colors = cm.get_cmap('tab20', num_lens_bins ** 2)
+    color_idx = 0
+
+    # Lens galaxy-Lens galaxy auto-corr spectra
+    if 'GG' in correlation_types:
+        for i in range(num_lens_bins):
+            for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GG{i+1}_{k+1}'] = cl
+
+
+    # galaxy lensing-galaxy lensing auto-corr spectra
+    if 'LL' in correlation_types:
+        for i in range(num_source_bins):
+            for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'LL{i+1}_{k+1}'] = cl
+
+
+    # galaxy-galaxy lensing cross-corr spectra
+    if 'GL' in correlation_types:
+        for i in range (num_source_bins):
+            for k in range(num_lens_bins):
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GL{i+1}_{k+1}'] = cl
+
+    # CMB lensing-galaxy lensing cross-corr spectra
+    if 'CL' in correlation_types:
+        for j in range(num_source_bins):
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CL{j+1}'] = cl
+
+    # CMB lensing-lens galaxies cross-corr spectra
+    if 'CG' in correlation_types:
+        for j in range(num_lens_bins):
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CG{j+1}'] = cl
+
+    # CMB lensing-CMB lensing auto-corr spectra
+    if 'CC' in correlation_types:
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+        cl_spectra[f'CC'] = cl
 
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
