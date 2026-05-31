@@ -1,14 +1,14 @@
 #Cobaya!
 
 likelihood:
-  functions_and_classes.SO_x_DESI_Likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_w_emulator:
     python_path: "likelihoods"
 
     data_specs:
       f_sky: 0.4
       n_ell: 3000
       binsize: 50
-
+      
       # data
       lens_data_path: data/DESI_lens_data_bin1.npy
       source_data_path: data/HSC_dist_0_3_bin1.npy
@@ -27,7 +27,7 @@ likelihood:
         Omega_c: 0.27
         Omega_b: 0.045
         h: 0.674
-        sigma8: 0.8
+        A_s: 2.105e-9
         n_s: 0.96
         w0: -1.0
         wa: 0.0
@@ -47,19 +47,19 @@ params:
 
   # 'Omega_m': 0.316, # fixed
 
-  #  sigma8:
+  #  A_s:
   #    prior:
   #      dist: norm
-  #      loc: 0.8
-  #      scale: 0.05
+  #      loc: 2.105e-9
+  #      scale: ???????
   #    ref:
   #      dist: norm
-  #      loc: 0.8
+  #      loc: 2.105e-9
   #      scale: 0.01
-  #    proposal: 0.01
+  #    proposal: ?????????
   #    latex: "\\sigma_8"
   
-  sigma8: 0.8
+  A_s: 2.105e-9
 
   # 'h':
   #   prior:
@@ -140,4 +140,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_emulated_forecast_bin1_omega_m
