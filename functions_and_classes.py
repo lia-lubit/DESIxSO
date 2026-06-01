@@ -1329,6 +1329,8 @@ class SO_x_DESI_Likelihood(Likelihood):
             )
             print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
+            self.fiducial_cosmology.compute_growth()
+            
             # build the fiducial data vector (Cls) and covariance matrix
             self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
                 build_covariance_from_data(
@@ -1410,6 +1412,8 @@ class SO_x_DESI_Likelihood(Likelihood):
             Omega_k=Omega_k,
             transfer_function='boltzmann_camb'
         )
+
+        current_cosmology.compute_growth()
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(2, self.n_ell + 2) # unbinned ells
