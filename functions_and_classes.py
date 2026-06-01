@@ -306,7 +306,7 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
     return noise_dict
 
 # build spectra dictionary w/ or w/o emulator
-def build_spectra_dict(cosmo, f_map, tracer_dict, ells, linear_emulator = None, boost_emulator = None, noise_dict=None):
+def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None):
     spectra_dict = {}
 
     # make Pk2D object if an emulator is present
@@ -399,13 +399,13 @@ def build_covariance_from_data(
     f_sky,
     n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation
     binsize=1,  # New parameter for binning
-    linear_emulator = None,
-    boost_emulator = None,
-    shot_noise_lens=None,
+    shot_noise_lens = None,
     shape_noise_source=None,
     cmb_noise_kappa=None,
     magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
-    desired_spectra=None
+    desired_spectra=None,
+    linear_emulator = None,
+    boost_emulator = None
 ):
 
     # ForecastMap still works with the total number of ell values (unbinned)
@@ -423,7 +423,7 @@ def build_covariance_from_data(
     lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
     noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kappa)
-    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, linear_emulator, boost_emulator, noise_dict)
+    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict, linear_emulator, boost_emulator)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
     cov = CovarianceMatrix(f_map, spectra_dict, f_sky, binsize=binsize)
@@ -1234,7 +1234,8 @@ class SO_x_DESI_Likelihood(Likelihood):
 
     params = {
         "Omega_m": None, # matter density
-        "sigma8": None,  # amplitude of matter fluctuations
+        #"sigma8": None,  # amplitude of matter fluctuations
+        "A_s": None,      # amplitude of primordial fluctuations
         "h": None,       # Hubble parameter
         "Omega_b": None, # baryon density
         "n_s": None,     # primordial tilt
@@ -1307,7 +1308,8 @@ class SO_x_DESI_Likelihood(Likelihood):
             _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
             _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
             _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            _sigma8 = fiducial_cosmo_input.get('sigma8', flat_LCDM_cosmology.cosmo['sigma8'])
+            #_sigma8 = fiducial_cosmo_input.get('sigma8', flat_LCDM_cosmology.cosmo['sigma8'])
+            _A_s = fiducial_cosmo_input.get('A_s', flat_LCDM_cosmology.cosmo['A_s'])
             _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
             _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
             _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
@@ -1317,14 +1319,15 @@ class SO_x_DESI_Likelihood(Likelihood):
                 Omega_c=_Omega_c,
                 Omega_b=_Omega_b,
                 h=_h,
-                sigma8=_sigma8,
+                #sigma8=_sigma8,
+                A_s = A_s,
                 n_s=_n_s,
                 w0=_w0,
                 wa=_wa,
                 Omega_k=_Omega_k,
                 transfer_function='bbks'
             )
-            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, sigma8={_sigma8}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
+            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
             # build the fiducial data vector (Cls) and covariance matrix
             self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
@@ -1339,7 +1342,9 @@ class SO_x_DESI_Likelihood(Likelihood):
                     shape_noise_source=self.shape_noise_source,
                     cmb_noise_kappa=self.cmb_noise_kappa,
                     magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra
+                    desired_spectra=self.desired_spectra, 
+                    linear_emulator = None,
+                    boost_emulator = None
                 )
             self.covariance_matrix = self.cov_obj.matrix # Store the full matrix
 
@@ -1386,7 +1391,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         Omega_m = kwargs['Omega_m']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
-        sigma8 = kwargs['sigma8']
+        A_s = kwargs['A_s']
         n_s = kwargs['n_s']
         w0 = kwargs['w0']
         wa = kwargs['wa']
@@ -1398,12 +1403,12 @@ class SO_x_DESI_Likelihood(Likelihood):
             Omega_c=Omega_c,
             Omega_b=Omega_b,
             h=h,
-            sigma8=sigma8,
+            A_s=A_s,
             n_s=n_s,
             w0=w0,
             wa=wa,
             Omega_k=Omega_k,
-            transfer_function='bbks'
+            transfer_function='boltzmann_camb'
         )
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
@@ -1444,14 +1449,14 @@ class SO_x_DESI_Likelihood(Likelihood):
         return log_likelihood
 
 # make likelihood class that uses emulator for calculated spectra 
-### should we change this so that the emulator is not used for the initial covariance and data vectors? 
-### -- those don't take long to make and so I figure we should keep the accuracy up
+# the emulator is not used for the initial covariance and data vectors 
+# -- those don't take long to make and so I figure we should keep the accuracy up
 # make SO DESI Likelihood class w/emulator
 class SO_x_DESI_Likelihood_w_emulator(Likelihood):
 
     params = {
         "Omega_m": None, # matter density
-        "A_s": None      # amplitude of primordial fluctuations
+        "A_s": None,      # amplitude of primordial fluctuations
         "h": None,       # Hubble parameter
         "Omega_b": None, # baryon density
         "n_s": None,     # primordial tilt
@@ -1528,7 +1533,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
             _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
             _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
             _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            _A_s = fiducial_cosmo_input.get('sigma8,' flat_LCDM_cosmology.cosmo['A_s'])
+            _A_s = fiducial_cosmo_input.get('A_s', flat_LCDM_cosmology.cosmo['A_s'])
             _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
             _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
             _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
@@ -1538,7 +1543,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
                 Omega_c=_Omega_c,
                 Omega_b=_Omega_b,
                 h=_h,
-                A_s=A_s,
+                A_s=_A_s,
                 n_s=_n_s,
                 w0=_w0,
                 wa=_wa,
@@ -1547,6 +1552,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
             )
             print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
+            self.fiducial_cosmology.compute_growth()
+            
             # build the fiducial data vector (Cls) and covariance matrix
             self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
                 build_covariance_from_data(
@@ -1556,15 +1563,15 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
                     f_sky=self.f_sky,
                     n_ell=self.n_ell,
                     binsize=self.binsize,
-                    linear_emulator=self.linear_emulator,
-                    boost_emulator=self.boost_emulator,
                     shot_noise_lens=self.shot_noise_lens,
                     shape_noise_source=self.shape_noise_source,
                     cmb_noise_kappa=self.cmb_noise_kappa,
                     magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra
+                    desired_spectra=self.desired_spectra,
+                    linear_emulator=None,
+                    boost_emulator=None
                 )
-            self.covariance_matrix = self.cov_obj.matrix # Store the full matrix
+            self.covariance_matrix = self.cov_obj.matrix 
 
             # flatten the fiducial Cls into a data vector 'D'
             self.observed_data_vector = np.array([])
@@ -1627,6 +1634,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
             Omega_k=Omega_k,
             transfer_function='boltzmann_camb'
         )
+        
+        current_cosmology.compute_growth()
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(2, self.n_ell + 2) # unbinned ells
