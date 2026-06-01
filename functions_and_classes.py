@@ -8,6 +8,7 @@ import sys
 import inspect
 import yaml
 import time
+import types
 
 # scientific stack
 import numpy as np
@@ -852,7 +853,7 @@ def calculate_Cls_w_emulator(
     source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
     lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
     Pk2D_object,        # previously built Pk2D object
-    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot,
 ):
 
     # extract lens and source redshift grids and distributions
@@ -863,7 +864,7 @@ def calculate_Cls_w_emulator(
     n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
     num_source_bins = len(n_source_dists)
     z_CMB = 1090
-
+       
     # initialize ccl.NumberCountsTracer for each lens and source bin
     lens_tracers_nc = []
     lensing_tracers_nc = []
@@ -975,7 +976,6 @@ def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     return Pk2D
 
 # create a P(k) given a general cosmology
-
 # take in a cosmology, and emulator, and a z value and predict the P(k) using the emulator
 # output a 1D array or P(k) values for given k
 def predict_linear_Pk(cosmology, emulator, z):
@@ -1677,3 +1677,71 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
 
         return log_likelihood
+
+# class to get us information on the time taken to call the Pk2D object within PyCCL
+class Pk2DTimer:
+    def __init__(self):
+        self.total_time_spent = 0.0
+        self.call_count = 0
+
+    def reset_timers(self):
+        self.total_time_spent = 0.0
+        self.call_count = 0
+        print("Pk2D timers and counters reset.")
+
+    def get_timing_info(self):
+        return {"total_time_ns": self.total_time_spent, "call_count": self.call_count}
+
+# wrapper to get us information on the time taken to call the Pk2D object within PyCCL
+def instrument_Pk2D(pk2d_object):
+    if not isinstance(pk2d_object, ccl.Pk2D):
+        raise TypeError("pk2d_object must be an instance of ccl.Pk2D")
+
+    # check if already instrumented (to prevent infinite recursion if called multiple times on the same object)
+    if hasattr(pk2d_object, '_timer') and hasattr(pk2d_object, '_original_call_func'):
+        print("Warning: Pk2D object already instrumented. Resetting timer.")
+        pk2d_object.reset_timers()
+        return pk2d_object
+
+    print(f"Original Pk2D __call__ type: {type(pk2d_object.__call__)}")
+    # attach a Pk2DTimer instance to the Pk2D object
+    pk2d_object._timer = Pk2DTimer()
+
+    # store the original __call__ method (bound method)
+    original_call_bound = pk2d_object.__call__
+    # store the underlying function of the original method
+    original_call_func = original_call_bound.__func__
+    # store it on the object so the new timed_call can reliably access it
+    pk2d_object._original_call_func = original_call_func
+
+    original_cosmo_attribute = getattr(original_call_bound, '_cosmo', None)
+
+    # define a new __call__ method that includes timing
+    # this new method will be bound to the pk2d_object instance later
+    def timed_call(self, k, a, cosmo=None, derivative=None): # Match pyccl's signature
+        print("DEBUG: Inside timed_call") 
+        self._timer.call_count += 1
+        start_time = time.perf_counter_ns()
+        # Call the original underlying function, manually passing 'self' (which is the pk2d_object)
+        # Using the stored _original_call_func to avoid closure issues.
+        pk_value = self._original_call_func(self, k, a, cosmo=cosmo, derivative=derivative)
+        end_time = time.perf_counter_ns()
+        self._timer.total_time_spent += (end_time - start_time)
+        return pk_value
+
+    # ALWAYS set the _cosmo attribute on the new `timed_call` function object.
+    # this ensures that `self.__call__._cosmo` (which becomes `timed_call._cosmo`)
+    # always exists, preventing the AttributeError.
+    timed_call._cosmo = original_cosmo_attribute
+
+    # replace the __call__ method of the *instance*
+    # use types.MethodType to correctly bind the new method to the instance
+    pk2d_object.__call__ = types.MethodType(timed_call, pk2d_object)
+    print(f"New Pk2D __call__ type after instrumentation: {type(pk2d_object.__call__)}")
+
+    # add convenience methods directly to the pk2d_object for easier access
+    pk2d_object.reset_timers = pk2d_object._timer.reset_timers
+    pk2d_object.get_timing_info = pk2d_object._timer.get_timing_info
+
+    print("Pk2D object instrumented for timing.")
+    return pk2d_object
