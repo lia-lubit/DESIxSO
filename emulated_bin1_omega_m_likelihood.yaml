@@ -38,10 +38,13 @@ params:
 
   Omega_m:
     prior:
-      dist: norm
-      loc: 0.316
-      scale: 0.025
-    ref: 0.316
+        dist: norm
+        loc: 0.316
+        scale: 0.025
+    ref:
+        dist: norm
+        loc: 0.316
+        scale: 0.01
     proposal: 0.01
     latex: "\\Omega_m"
 
@@ -131,10 +134,10 @@ params:
 sampler:
   mcmc:
     Rminus1_stop: 0.01
-    max_samples: 50
+    max_samples: 1000
     #max_samples: 10000
     proposal_scale: 1.5
-    seed: 12345
+    #seed: 12345
 
 # theory
 theory: {}
