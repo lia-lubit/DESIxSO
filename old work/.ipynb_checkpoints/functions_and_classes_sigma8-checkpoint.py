@@ -8,7 +8,6 @@ import sys
 import inspect
 import yaml
 import time
-import types
 
 # scientific stack
 import numpy as np
@@ -50,14 +49,12 @@ print("LOADING FILE:", os.path.abspath(__file__))
 
 ## FUNCTIONS
 
-# calcualte and (maybe) plot angular power spectra
-def calculate_and_plot_Cls(
+# calculate angular power spectra
+def calculate_Cls(
     cosmology,        # ccl.Cosmology object
     source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
     lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
-    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'], # List of correlation types to plot
-    Pk2D_object = None,    # Pk2D object from emulator,
-    plot = 'yes'       # chose whether to plot
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
 ):
 
     # extract lens and source redshift grids and distributions
@@ -82,7 +79,7 @@ def calculate_and_plot_Cls(
     for i, n_z_source_bin in enumerate(n_source_dists):
             # use a constant linear bias of 1
             bias_values = np.ones_like(z_source_grid)
-            tracer = ccl.WeakLensingTracer(cosmology, has_rsd=False,
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
                                             dndz=(z_source_grid, n_z_source_bin),
                                             bias=(z_source_grid, bias_values))
             lensing_tracers_nc.append(tracer)
@@ -102,7 +99,7 @@ def calculate_and_plot_Cls(
     if 'GG' in correlation_types:
         for i in range(num_lens_bins):
             for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
-                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values, p_of_k_a = Pk2D_object)    
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values)
                 cl_spectra[f'GG{i+1}_{k+1}'] = cl
 
 
@@ -110,7 +107,7 @@ def calculate_and_plot_Cls(
     if 'LL' in correlation_types:
         for i in range(num_source_bins):
             for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
-                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values, p_of_k_a = Pk2D_object)
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values)
                 cl_spectra[f'LL{i+1}_{k+1}'] = cl
 
 
@@ -118,47 +115,128 @@ def calculate_and_plot_Cls(
     if 'GL' in correlation_types:
         for i in range (num_source_bins):
             for k in range(num_lens_bins):
-                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values, p_of_k_a = Pk2D_object)
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values)
                 cl_spectra[f'GL{i+1}_{k+1}'] = cl
 
     # CMB lensing-galaxy lensing cross-corr spectra
     if 'CL' in correlation_types:
         for j in range(num_source_bins):
-            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values)
             cl_spectra[f'CL{j+1}'] = cl
 
     # CMB lensing-lens galaxies cross-corr spectra
     if 'CG' in correlation_types:
         for j in range(num_lens_bins):
-            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values)
             cl_spectra[f'CG{j+1}'] = cl
 
     # CMB lensing-CMB lensing auto-corr spectra
     if 'CC' in correlation_types:
-        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values)
         cl_spectra[f'CC'] = cl
 
-    if plot.lower() == 'yes':
-        # plot all calculated Cl spectra
-        plt.figure(figsize=(12, 8))
-        for key, cl_values in cl_spectra.items():
-            plt.loglog(ell_values, cl_values, label=key, color=colors(color_idx % colors.N))
-            color_idx += 1
+    return cl_spectra
+    
+# calcualte and plot angular power spectra
+def calculate_and_plot_Cls(
+    cosmology,        # ccl.Cosmology object
+    source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
+    lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+):
 
-        plt.xlabel(r'Multipole, $\ell$')
-        plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
-        plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
-        plt.legend(loc='best', fontsize='small', bbox_to_anchor=(1.05, 1))
-        plt.grid(True, which="both", ls="-")
-        plt.tight_layout()
-        plt.show()
+    # extract lens and source redshift grids and distributions
+    z_lens_grid = lens_data[:, 0]
+    n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
+    num_lens_bins = len(n_lens_dists)
+    z_source_grid = source_data[:, 0]
+    n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
+    num_source_bins = len(n_source_dists)
+    z_CMB = 1090
 
-    elif plot.lower() == 'no':
-        return cl_spectra
+    # initialize ccl.NumberCountsTracer for each lens and source bin
+    lens_tracers_nc = []
+    lensing_tracers_nc = []
+    for i, n_z_lens_bin in enumerate(n_lens_dists):
+        # use a constant linear bias of 1
+        bias_values = np.ones_like(z_lens_grid)
+        tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                        dndz=(z_lens_grid, n_z_lens_bin),
+                                        bias=(z_lens_grid, bias_values))
+        lens_tracers_nc.append(tracer)
+    for i, n_z_source_bin in enumerate(n_source_dists):
+            # use a constant linear bias of 1
+            bias_values = np.ones_like(z_source_grid)
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                            dndz=(z_source_grid, n_z_source_bin),
+                                            bias=(z_source_grid, bias_values))
+            lensing_tracers_nc.append(tracer)
 
-    else:
-        print(f"Warning: Invalid plot option '{plot}'. Expected 'yes' or 'no'. Proceeding without plotting.")
-   
+    # create CMB lensing tracerrs
+    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+
+    # define common range of multipoles and a dictionary
+    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    cl_spectra = {}
+
+    # generate a colormap for distinct colors
+    colors = cm.get_cmap('tab20', num_lens_bins ** 2)
+    color_idx = 0
+
+    # Lens galaxy-Lens galaxy auto-corr spectra
+    if 'GG' in correlation_types:
+        for i in range(num_lens_bins):
+            for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values)
+                cl_spectra[f'GG{i+1}_{k+1}'] = cl
+
+
+    # galaxy lensing-galaxy lensing auto-corr spectra
+    if 'LL' in correlation_types:
+        for i in range(num_source_bins):
+            for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values)
+                cl_spectra[f'LL{i+1}_{k+1}'] = cl
+
+
+    # galaxy-galaxy lensing cross-corr spectra
+    if 'GL' in correlation_types:
+        for i in range (num_source_bins):
+            for k in range(num_lens_bins):
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values)
+                cl_spectra[f'GL{i+1}_{k+1}'] = cl
+
+    # CMB lensing-galaxy lensing cross-corr spectra
+    if 'CL' in correlation_types:
+        for j in range(num_source_bins):
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values)
+            cl_spectra[f'CL{j+1}'] = cl
+
+    # CMB lensing-lens galaxies cross-corr spectra
+    if 'CG' in correlation_types:
+        for j in range(num_lens_bins):
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values)
+            cl_spectra[f'CG{j+1}'] = cl
+
+    # CMB lensing-CMB lensing auto-corr spectra
+    if 'CC' in correlation_types:
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values)
+        cl_spectra[f'CC'] = cl
+
+    # plot all calculated Cl spectra
+    plt.figure(figsize=(12, 8))
+    for key, cl_values in cl_spectra.items():
+        plt.loglog(ell_values, cl_values, label=key, color=colors(color_idx % colors.N))
+        color_idx += 1
+
+    plt.xlabel(r'Multipole, $\ell$')
+    plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
+    plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
+    plt.legend(loc='best', fontsize='small', bbox_to_anchor=(1.05, 1))
+    plt.grid(True, which="both", ls="-")
+    plt.tight_layout()
+    plt.show()
+
 # compute general spectra with noise
 def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None):
     # build CCL tracers from distributions
@@ -228,14 +306,14 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
     return noise_dict
 
 # build spectra dictionary w/ or w/o emulator
-def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None):
+def build_spectra_dict(cosmo, f_map, tracer_dict, ells, linear_emulator = None, boost_emulator = None, noise_dict=None):
     spectra_dict = {}
 
     # make Pk2D object if an emulator is present
     if linear_emulator != None:
         a_grid = np.linspace(1/(1+5), 1.0, 20)
         z_grid = (1.0 / a_grid) - 1.0
-        Pk2D_object = make_Pk2D(cosmo, linear_emulator = linear_emulator, boost_emulator = boost_emulator, z_arr = z_grid, cmin = 3.13, eta_0 = 0.68)
+        Pk2D_object = make_Pk2D(cosmo, linear_emulator = linear_emulator, boost_emulator = boost_emulator, z_arr = z_grid, cmin = 3.13, eta_0 = 0.68):
 
     # Iterate through all unique pairs of tracers in tracer_dict to calculate Cls
     tracer_labels = list(tracer_dict.keys())
@@ -252,7 +330,7 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
                 tracer1 = tracer_dict[label1]
                 tracer2 = tracer_dict[label2]
 
-                if linear_emulator == None:
+                if linear_emulator = None:
                     Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells)
 
                 else:
@@ -321,13 +399,13 @@ def build_covariance_from_data(
     f_sky,
     n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation
     binsize=1,  # New parameter for binning
-    shot_noise_lens = None,
+    linear_emulator = None,
+    boost_emulator = None,
+    shot_noise_lens=None,
     shape_noise_source=None,
     cmb_noise_kappa=None,
     magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
-    desired_spectra=None,
-    linear_emulator = None,
-    boost_emulator = None
+    desired_spectra=None
 ):
 
     # ForecastMap still works with the total number of ell values (unbinned)
@@ -345,7 +423,7 @@ def build_covariance_from_data(
     lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
     noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kappa)
-    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict, linear_emulator, boost_emulator)
+    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, linear_emulator, boost_emulator, noise_dict)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
     cov = CovarianceMatrix(f_map, spectra_dict, f_sky, binsize=binsize)
@@ -634,6 +712,9 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
         plt.tight_layout()
         plt.show()
 
+# -------------------------------------------------------------------------------------------------------------------------------------------- #
+## CosmoPower
+
 # get A_s from sigma8
 def get_linear_As(cosmology):
     
@@ -667,93 +748,237 @@ def get_linear_As(cosmology):
     As = fiducial_As * (target_sigma8 / fiducial_sigma8) ** 2
     return As
 
+# pass non-linear Pk2D object to PyCCL and generate and plot power spectra
+def calculate_and_plot_Cls_w_emulator(
+    cosmology,        # ccl.Cosmology object
+    source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
+    lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
+    Pk2D_object,        # previously built Pk2D object
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+):
+
+    # extract lens and source redshift grids and distributions
+    z_lens_grid = lens_data[:, 0]
+    n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
+    num_lens_bins = len(n_lens_dists)
+    z_source_grid = source_data[:, 0]
+    n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
+    num_source_bins = len(n_source_dists)
+    z_CMB = 1090
+
+    # initialize ccl.NumberCountsTracer for each lens and source bin
+    lens_tracers_nc = []
+    lensing_tracers_nc = []
+    for i, n_z_lens_bin in enumerate(n_lens_dists):
+        # use a constant linear bias of 1
+        bias_values = np.ones_like(z_lens_grid)
+        tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                        dndz=(z_lens_grid, n_z_lens_bin),
+                                        bias=(z_lens_grid, bias_values))
+        lens_tracers_nc.append(tracer)
+    for i, n_z_source_bin in enumerate(n_source_dists):
+            # use a constant linear bias of 1
+            bias_values = np.ones_like(z_source_grid)
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                            dndz=(z_source_grid, n_z_source_bin),
+                                            bias=(z_source_grid, bias_values))
+            lensing_tracers_nc.append(tracer)
+
+    # create CMB lensing tracerrs
+    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+
+    # define common range of multipoles and a dictionary
+    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    cl_spectra = {}
+
+    # generate a colormap for distinct colors
+    colors = cm.get_cmap('tab20', num_lens_bins ** 2)
+    color_idx = 0
+
+    # Lens galaxy-Lens galaxy auto-corr spectra
+    if 'GG' in correlation_types:
+        for i in range(num_lens_bins):
+            for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GG{i+1}_{k+1}'] = cl
+
+
+    # galaxy lensing-galaxy lensing auto-corr spectra
+    if 'LL' in correlation_types:
+        for i in range(num_source_bins):
+            for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'LL{i+1}_{k+1}'] = cl
+
+
+    # galaxy-galaxy lensing cross-corr spectra
+    if 'GL' in correlation_types:
+        for i in range (num_source_bins):
+            for k in range(num_lens_bins):
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GL{i+1}_{k+1}'] = cl
+
+    # CMB lensing-galaxy lensing cross-corr spectra
+    if 'CL' in correlation_types:
+        for j in range(num_source_bins):
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CL{j+1}'] = cl
+
+    # CMB lensing-lens galaxies cross-corr spectra
+    if 'CG' in correlation_types:
+        for j in range(num_lens_bins):
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CG{j+1}'] = cl
+
+    # CMB lensing-CMB lensing auto-corr spectra
+    if 'CC' in correlation_types:
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+        cl_spectra[f'CC'] = cl
+
+    # plot all calculated Cl spectra
+    plt.figure(figsize=(12, 8))
+    for key, cl_values in cl_spectra.items():
+        plt.loglog(ell_values, cl_values, label=key, color=colors(color_idx % colors.N))
+        color_idx += 1
+
+    plt.xlabel(r'Multipole, $\ell$')
+    plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
+    plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
+    plt.legend(loc='best', fontsize='small', bbox_to_anchor=(1.05, 1))
+    plt.grid(True, which="both", ls="-")
+    plt.tight_layout()
+    plt.show()
+    
+# pass non-linear Pk2D object to PyCCL and generate power spectra
+def calculate_Cls_w_emulator(
+    cosmology,        # ccl.Cosmology object
+    source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
+    lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
+    Pk2D_object,        # previously built Pk2D object
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'] # List of correlation types to plot
+):
+
+    # extract lens and source redshift grids and distributions
+    z_lens_grid = lens_data[:, 0]
+    n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
+    num_lens_bins = len(n_lens_dists)
+    z_source_grid = source_data[:, 0]
+    n_source_dists = [source_data[:, i] for i in range(1, source_data.shape[1])]
+    num_source_bins = len(n_source_dists)
+    z_CMB = 1090
+
+    # initialize ccl.NumberCountsTracer for each lens and source bin
+    lens_tracers_nc = []
+    lensing_tracers_nc = []
+    for i, n_z_lens_bin in enumerate(n_lens_dists):
+        # use a constant linear bias of 1
+        bias_values = np.ones_like(z_lens_grid)
+        tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                        dndz=(z_lens_grid, n_z_lens_bin),
+                                        bias=(z_lens_grid, bias_values))
+        lens_tracers_nc.append(tracer)
+    for i, n_z_source_bin in enumerate(n_source_dists):
+            # use a constant linear bias of 1
+            bias_values = np.ones_like(z_source_grid)
+            tracer = ccl.NumberCountsTracer(cosmology, has_rsd=False,
+                                            dndz=(z_source_grid, n_z_source_bin),
+                                            bias=(z_source_grid, bias_values))
+            lensing_tracers_nc.append(tracer)
+
+    # create CMB lensing tracerrs
+    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+
+    # define common range of multipoles and a dictionary
+    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    cl_spectra = {}
+
+    # generate a colormap for distinct colors
+    colors = cm.get_cmap('tab20', num_lens_bins ** 2)
+    color_idx = 0
+
+    # Lens galaxy-Lens galaxy auto-corr spectra
+    if 'GG' in correlation_types:
+        for i in range(num_lens_bins):
+            for k in range(i, num_lens_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lens_tracers_nc[i], lens_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GG{i+1}_{k+1}'] = cl
+
+
+    # galaxy lensing-galaxy lensing auto-corr spectra
+    if 'LL' in correlation_types:
+        for i in range(num_source_bins):
+            for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
+                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'LL{i+1}_{k+1}'] = cl
+
+
+    # galaxy-galaxy lensing cross-corr spectra
+    if 'GL' in correlation_types:
+        for i in range (num_source_bins):
+            for k in range(num_lens_bins):
+                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values, p_of_k_a=Pk2D_object)
+                cl_spectra[f'GL{i+1}_{k+1}'] = cl
+
+    # CMB lensing-galaxy lensing cross-corr spectra
+    if 'CL' in correlation_types:
+        for j in range(num_source_bins):
+            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CL{j+1}'] = cl
+
+    # CMB lensing-lens galaxies cross-corr spectra
+    if 'CG' in correlation_types:
+        for j in range(num_lens_bins):
+            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+            cl_spectra[f'CG{j+1}'] = cl
+
+    # CMB lensing-CMB lensing auto-corr spectra
+    if 'CC' in correlation_types:
+        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a=Pk2D_object)
+        cl_spectra[f'CC'] = cl
+
+    return cl_spectra
+
 # create full Pk2D object from our emulator
 # non-linear P(k) = linear P(k) * boost
-#def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
+def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
 
     # the emulator isn't trained past z = 15, and might not be well trained there either
-#    if z_arr is None:
-#        z_arr = np.linspace(0, 10, 500)
-
-    # make grids with our wavelength and redshift values that we'll run the emulator on
-    # sort redshifts in descending order so that scale factors 'a' are ascending
-#    z_sorted_descending = np.sort(z_arr)[::-1] 
-#    a_arr = 1.0 / (1.0 + z_sorted_descending)
-#    lk_arr = np.log(linear_emulator.modes)      
-#    print(lk_arr)
-#    pk_arr = np.zeros((len(a_arr), len(lk_arr)))
-
-#    if boost_emulator == None:
-#        for i, z in enumerate(z_sorted_descending):
-#            pk_arr[i, :] = predict_linear_Pk(cosmology, linear_emulator, z)
-
-#    else:        
-        # loop through all the redshifts and fill in the full P(k) for each 
-        # note that we don't need to explicitly cycle through the k's because we can just past the whole 1D array
-#        for i, z in enumerate(z_sorted_descending):
-#            linear_Pk = predict_linear_Pk(cosmology, linear_emulator, z)
-#            boost_Pk = predict_boost_Pk(cosmology, boost_emulator, z, cmin, eta_0)
-#            non_linear_Pk = linear_Pk * boost_Pk
-#            pk_arr[i, :] = non_linear_Pk
-            
-#    Pk2D = ccl.Pk2D(
-#        a_arr=a_arr,
-#        lk_arr=lk_arr,
-#        pk_arr=pk_arr,
-#        is_logp=False,         # keep False unless your emulator outputs ln(P)
-#        extrap_order_lok=1,    # linear extrapolation for low-k
-#        extrap_order_hik=2     # quadratic extrapolation for high-k
-#    )
-    
-#    return Pk2D
-
-def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     if z_arr is None:
         z_arr = np.linspace(0, 10, 500)
 
-    z_sorted_descending = np.sort(z_arr)[::-1]
+    # make grids with our wavelength and redshift values that we'll run the emulator on
+    # sort redshifts in descending order so that scale factors 'a' are ascending
+    z_sorted_descending = np.sort(z_arr)[::-1] 
     a_arr = 1.0 / (1.0 + z_sorted_descending)
-    
-    # 1. Base emulator k grid
-    lk_arr_emu = np.log(linear_emulator.modes)
-    
-    # 2. Dense extended grid out to k ~ 1100 h/Mpc
-    lk_ext = np.linspace(lk_arr_emu[-1] + 0.05, 7.0, 100)
-    lk_arr = np.concatenate([lk_arr_emu, lk_ext])
-    #print("lk_arr grid: ", lk_arr)
-    
+    lk_arr = np.log(linear_emulator.modes)            
     pk_arr = np.zeros((len(a_arr), len(lk_arr)))
 
-    for i, z in enumerate(z_sorted_descending):
-        linear_Pk = predict_linear_Pk(cosmology, linear_emulator, z)
-        
-        if boost_emulator is None:
-            non_linear_Pk = linear_Pk
-        else:
+    if boost_emulator == None:
+        for i, z in enumerate(z_sorted_descending):
+            pk_arr[i, :] = predict_linear_Pk(cosmology, linear_emulator, z)
+
+    else:        
+        # loop through all the redshifts and fill in the full P(k) for each 
+        # note that we don't need to explicitly cycle through the k's because we can just past the whole 1D array
+        for i, z in enumerate(z_sorted_descending):
+            linear_Pk = predict_linear_Pk(cosmology, linear_emulator, z)
             boost_Pk = predict_boost_Pk(cosmology, boost_emulator, z, cmin, eta_0)
             non_linear_Pk = linear_Pk * boost_Pk
-        
-        # 3. Use a safe, physically-motivated fixed slope for deep non-linear tails
-        # stable dark matter power spectra fall off roughly as k^(-3) in this regime
-        fixed_slope = -3.1 
-        
-        delta_lk = lk_ext - lk_arr_emu[-1]
-        pk_ext = non_linear_Pk[-1] * np.exp(fixed_slope * delta_lk)
-        
-        pk_arr[i, :] = np.concatenate([non_linear_Pk, pk_ext])
-
-    # 4. Build Pk2D with strict linear boundary extrapolation flags
+            pk_arr[i, :] = non_linear_Pk
+            
     Pk2D = ccl.Pk2D(
         a_arr=a_arr,
         lk_arr=lk_arr,
         pk_arr=pk_arr,
-        is_logp=False, 
-        extrap_order_lok=1, # Strict linear extrapolation for low-k
-        extrap_order_hik=1  # Strict linear extrapolation for high-k (safest)
+        is_logp=False,         # keep False unless your emulator outputs ln(P)
+        extrap_order_lok=1,    # linear extrapolation for low-k
+        extrap_order_hik=2     # quadratic extrapolation for high-k
     )
-    return Pk2D
     
+    return Pk2D
+
 # create a P(k) given a general cosmology
+
 # take in a cosmology, and emulator, and a z value and predict the P(k) using the emulator
 # output a 1D array or P(k) values for given k
 def predict_linear_Pk(cosmology, emulator, z):
@@ -1012,8 +1237,7 @@ class SO_x_DESI_Likelihood(Likelihood):
 
     params = {
         "Omega_m": None, # matter density
-        #"sigma8": None,  # amplitude of matter fluctuations
-        "A_s": None,      # amplitude of primordial fluctuations
+        "sigma8": None,  # amplitude of matter fluctuations
         "h": None,       # Hubble parameter
         "Omega_b": None, # baryon density
         "n_s": None,     # primordial tilt
@@ -1086,8 +1310,7 @@ class SO_x_DESI_Likelihood(Likelihood):
             _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
             _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
             _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            #_sigma8 = fiducial_cosmo_input.get('sigma8', flat_LCDM_cosmology.cosmo['sigma8'])
-            _A_s = fiducial_cosmo_input.get('A_s', flat_LCDM_cosmology.cosmo['A_s'])
+            _sigma8 = fiducial_cosmo_input.get('sigma8', flat_LCDM_cosmology.cosmo['sigma8'])
             _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
             _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
             _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
@@ -1097,18 +1320,15 @@ class SO_x_DESI_Likelihood(Likelihood):
                 Omega_c=_Omega_c,
                 Omega_b=_Omega_b,
                 h=_h,
-                #sigma8=_sigma8,
-                A_s = _A_s,
+                sigma8=_sigma8,
                 n_s=_n_s,
                 w0=_w0,
                 wa=_wa,
                 Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
+                transfer_function='bbks'
             )
-            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
+            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, sigma8={_sigma8}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
-            self.fiducial_cosmology.compute_growth()
-            
             # build the fiducial data vector (Cls) and covariance matrix
             self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
                 build_covariance_from_data(
@@ -1122,9 +1342,7 @@ class SO_x_DESI_Likelihood(Likelihood):
                     shape_noise_source=self.shape_noise_source,
                     cmb_noise_kappa=self.cmb_noise_kappa,
                     magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra, 
-                    linear_emulator = None,
-                    boost_emulator = None
+                    desired_spectra=self.desired_spectra
                 )
             self.covariance_matrix = self.cov_obj.matrix # Store the full matrix
 
@@ -1171,7 +1389,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         Omega_m = kwargs['Omega_m']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
-        A_s = kwargs['A_s']
+        sigma8 = kwargs['sigma8']
         n_s = kwargs['n_s']
         w0 = kwargs['w0']
         wa = kwargs['wa']
@@ -1183,15 +1401,13 @@ class SO_x_DESI_Likelihood(Likelihood):
             Omega_c=Omega_c,
             Omega_b=Omega_b,
             h=h,
-            A_s=A_s,
+            sigma8=sigma8,
             n_s=n_s,
             w0=w0,
             wa=wa,
             Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
+            transfer_function='bbks'
         )
-
-        current_cosmology.compute_growth()
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(2, self.n_ell + 2) # unbinned ells
@@ -1229,297 +1445,3 @@ class SO_x_DESI_Likelihood(Likelihood):
         log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
 
         return log_likelihood
-
-# make likelihood class that uses emulator for calculated spectra 
-# the emulator is not used for the initial covariance and data vectors 
-# -- those don't take long to make and so I figure we should keep the accuracy up
-# make SO DESI Likelihood class w/emulator
-class SO_x_DESI_Likelihood_w_emulator(Likelihood):
-
-    params = {
-        "Omega_m": None, # matter density
-        "A_s": None,      # amplitude of primordial fluctuations
-        "h": None,       # Hubble parameter
-        "Omega_b": None, # baryon density
-        "n_s": None,     # primordial tilt
-        "w0": None,      # dark energy equation of state parameter
-        "wa": None,      # dark energy equation of state parameter evolution
-        "Omega_k": None, # curvature density (for curved LCDM) - will set to 0 for flat_LCDM
-    }
-
-    # data-related settings, to be defined when configuring Cobaya
-    data_specs: dict
-
-    # initialize the likelihood
-    # set up fiducial cosmology, calculate fiducial data vector and covariance matrix
-    def initialize(self):
-        print("Initializing SO_x_DESI_Likelihood...")
-
-        # get emulators
-        self.linear_emulator = CPJ(probe='mpk_lin')
-        self.boost_emulator = CPJ(probe='mpk_boost')
-        
-        # extract necessary data specifications from the Cobaya input YAML/dictionary
-        # these parameters are passed via the 'data_specs' key in the Cobaya configuration.
-        self.f_sky = self.data_specs.get('f_sky', 0.4) # default to 0.4 if not provided
-        self.n_ell = self.data_specs.get('n_ell', 3000) # max unbinned ell
-        self.binsize = self.data_specs.get('binsize', 50) # binning size for ell
-        self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses', 0.8)
-        self.desired_spectra = self.data_specs.get('desired_spectra', ['GG', 'LL', 'GL', 'CC', 'CL', 'CG'])
-
-        # noise parameters, also sourced from data_specs, with default 'None'
-        self.shot_noise_lens = self.data_specs.get('shot_noise_lens', None)
-        self.shape_noise_source = self.data_specs.get('shape_noise_source', None)
-        self.cmb_noise_kappa = self.data_specs.get('cmb_noise_kappa', None)
-
-        # retrieve lens and source data arrays dynamically.
-        # these are expected to be available as global variables in the notebook
-        # and their names are passed via data_specs
-        self.lens_data = np.load(self.data_specs['lens_data_path'])
-        self.source_data = np.load(self.data_specs['source_data_path'])
-
-        print(f"  Loaded lens data from {self.data_specs['lens_data_path']}")
-        print(f"  Loaded source data from: {self.data_specs['source_data_path']}")
-
-        # New: Check for pre-computed data vector and covariance matrix paths
-        self.data_vector_path = self.data_specs.get('data_vector_path')
-        self.covariance_path = self.data_specs.get('covariance_path')
-
-        if self.data_vector_path and self.covariance_path:
-            print(f"  Loading observed data vector from: {self.data_vector_path}")
-            self.observed_data_vector = np.load(self.data_vector_path)
-            print(f"  Loading covariance matrix from: {self.covariance_path}")
-            self.covariance_matrix = np.load(self.covariance_path)
-
-            # Reconstruct f_map as it's still needed for model vector generation
-            # This assumes that the binsize, n_ell, n_lens, n_src, and desired_spectra used to save
-            # the data vector and covariance are consistent with the current data_specs.
-            num_lens_bins = self.lens_data.shape[1] - 1
-            num_source_bins = self.source_data.shape[1] - 1
-            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins,
-                                     n_ell=self.n_ell, desired_pairs=create_simplified_desired_pairs(num_lens_bins, num_source_bins, self.desired_spectra))
-
-            # Verify compatibility (optional but good practice)
-            num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-            expected_data_len = len(self.f_map.pairs) * num_binned_ells
-            if len(self.observed_data_vector) != expected_data_len:
-                raise ValueError(f"Loaded data vector length ({len(self.observed_data_vector)}) does not match expected length ({expected_data_len}) based on f_map and binsize.")
-            if self.covariance_matrix.shape != (expected_data_len, expected_data_len):
-                raise ValueError(f"Loaded covariance matrix shape ({self.covariance_matrix.shape}) does not match expected shape ({(expected_data_len, expected_data_len)}) based on f_map and binsize.")
-
-        else:
-            # Existing logic to compute fiducial data and covariance if not pre-computed
-            print("  No pre-computed data/covariance paths provided. Computing fiducial data and covariance...")
-            fiducial_cosmo_input = self.data_specs.get('fiducial_cosmology_params', {})
-
-            _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
-            _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
-            _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            _A_s = fiducial_cosmo_input.get('A_s', flat_LCDM_cosmology.cosmo['A_s'])
-            _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
-            _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
-            _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
-            _Omega_k = fiducial_cosmo_input.get('Omega_k', flat_LCDM_cosmology.cosmo['Omega_k'])
-
-            self.fiducial_cosmology = ccl.Cosmology(
-                Omega_c=_Omega_c,
-                Omega_b=_Omega_b,
-                h=_h,
-                A_s=_A_s,
-                n_s=_n_s,
-                w0=_w0,
-                wa=_wa,
-                Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
-            )
-            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
-
-            self.fiducial_cosmology.compute_growth()
-            
-            # build the fiducial data vector (Cls) and covariance matrix
-            self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
-                build_covariance_from_data(
-                    self.fiducial_cosmology,
-                    self.lens_data,
-                    self.source_data,
-                    f_sky=self.f_sky,
-                    n_ell=self.n_ell,
-                    binsize=self.binsize,
-                    shot_noise_lens=self.shot_noise_lens,
-                    shape_noise_source=self.shape_noise_source,
-                    cmb_noise_kappa=self.cmb_noise_kappa,
-                    magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra,
-                    linear_emulator=None,
-                    boost_emulator=None
-                )
-            self.covariance_matrix = self.cov_obj.matrix 
-
-            # flatten the fiducial Cls into a data vector 'D'
-            self.observed_data_vector = np.array([])
-            # note: ells_binned will be used for indexing the covariance matrix and observed data vector
-            # however, the length for the loop should correspond to the expected number of bins.
-            num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-            for pair in self.f_map.pairs:
-                # need to get the binned Cls
-                # for the fiducial 'observed' data, we take the mean of unbinned Cls within each bin
-                unbinned_cls = self.fiducial_spectra_dict[pair]
-                binned_cls_for_pair = []
-                for i in range(0, self.n_ell, self.binsize):
-                    # ensure we don't go out of bounds for the unbinned_cls array
-                    end_idx = min(i + self.binsize, len(unbinned_cls))
-                    if i < end_idx:
-                        binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                    else:
-                        # if a bin is empty (e.g., at the very end of ells if self.n_ell is not a multiple of binsize)
-                        binned_cls_for_pair.append(0.0)
-
-                # make sure the number of binned Cls matches the expected num_binned_ells
-                while len(binned_cls_for_pair) < num_binned_ells:
-                    binned_cls_for_pair.append(0.0) # pad with zeros or appropriate value
-
-                self.observed_data_vector = np.concatenate((self.observed_data_vector, binned_cls_for_pair))
-
-        # get the inverse covariance matrix and its log-determinant
-        self.inv_covariance = np.linalg.inv(self.covariance_matrix)
-        self.log_det_covariance = np.linalg.slogdet(self.covariance_matrix)[1]
-        print("SO_x_DESI_Likelihood initialized successfully.")
-
-    # get dictionary of required likelihood params
-    def get_requirements(self):
-        return {}
-
-    def logp(self, **kwargs):
-        # Cobaya passes parameters as keyword arguments. `ccl_data` contains the ccl.Cosmology object.
-        #ccl_data = kwargs['CCL']
-        #current_cosmology = ccl_data.get_cosmology()
-
-        Omega_m = kwargs['Omega_m']
-        Omega_b = kwargs['Omega_b']
-        h = kwargs['h']
-        A_s = kwargs['A_s']
-        n_s = kwargs['n_s']
-        w0 = kwargs['w0']
-        wa = kwargs['wa']
-        Omega_k = kwargs['Omega_k']
-        Omega_c = Omega_m - Omega_b
-        
-        current_cosmology = ccl.Cosmology(
-            Omega_c=Omega_c,
-            Omega_b=Omega_b,
-            h=h,
-            A_s=A_s,
-            n_s=n_s,
-            w0=w0,
-            wa=wa,
-            Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
-        )
-        
-        current_cosmology.compute_growth()
-        
-        # calculate the theoretical model data vector M(theta) for the current cosmology
-        ells = np.arange(2, self.n_ell + 2) # unbinned ells
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
-            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator)
-
-        # flatten the current Cls into a model data vector 'M'
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-        for pair in self.f_map.pairs:
-            unbinned_cls = current_spectra_dict[pair]
-            binned_cls_for_pair = []
-            for i in range(0, self.n_ell, self.binsize):
-                end_idx = min(i + self.binsize, len(unbinned_cls))
-                if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                else:
-                    binned_cls_for_pair.append(0.0)
-
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-
-        # calculate the difference vector (D - M(theta))
-        difference_vector = self.observed_data_vector - model_data_vector
-
-        # calculate the log-likelihood
-        # ln L = -1/2 * (D - M)^T * C^-1 * (D - M) - 1/2 * ln|C|
-        chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
-        log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
-
-        return log_likelihood
-
-# class to get us information on the time taken to call the Pk2D object within PyCCL
-class Pk2DTimer:
-    def __init__(self):
-        self.total_time_spent = 0.0
-        self.call_count = 0
-
-    def reset_timers(self):
-        self.total_time_spent = 0.0
-        self.call_count = 0
-        print("Pk2D timers and counters reset.")
-
-    def get_timing_info(self):
-        return {"total_time_ns": self.total_time_spent, "call_count": self.call_count}
-
-# wrapper to get us information on the time taken to call the Pk2D object within PyCCL
-def instrument_Pk2D(pk2d_object):
-    if not isinstance(pk2d_object, ccl.Pk2D):
-        raise TypeError("pk2d_object must be an instance of ccl.Pk2D")
-
-    # check if already instrumented (to prevent infinite recursion if called multiple times on the same object)
-    if hasattr(pk2d_object, '_timer') and hasattr(pk2d_object, '_original_call_func'):
-        print("Warning: Pk2D object already instrumented. Resetting timer.")
-        pk2d_object.reset_timers()
-        return pk2d_object
-
-    print(f"Original Pk2D __call__ type: {type(pk2d_object.__call__)}")
-    # attach a Pk2DTimer instance to the Pk2D object
-    pk2d_object._timer = Pk2DTimer()
-
-    # store the original __call__ method (bound method)
-    original_call_bound = pk2d_object.__call__
-    # store the underlying function of the original method
-    original_call_func = original_call_bound.__func__
-    # store it on the object so the new timed_call can reliably access it
-    pk2d_object._original_call_func = original_call_func
-
-    original_cosmo_attribute = getattr(original_call_bound, '_cosmo', None)
-
-    # define a new __call__ method that includes timing
-    # this new method will be bound to the pk2d_object instance later
-    def timed_call(self, k, a, cosmo=None, derivative=None): # Match pyccl's signature
-        print("DEBUG: Inside timed_call") 
-        self._timer.call_count += 1
-        start_time = time.perf_counter_ns()
-        # Call the original underlying function, manually passing 'self' (which is the pk2d_object)
-        # Using the stored _original_call_func to avoid closure issues.
-        pk_value = self._original_call_func(self, k, a, cosmo=cosmo, derivative=derivative)
-        end_time = time.perf_counter_ns()
-        self._timer.total_time_spent += (end_time - start_time)
-        return pk_value
-
-    # ALWAYS set the _cosmo attribute on the new `timed_call` function object.
-    # this ensures that `self.__call__._cosmo` (which becomes `timed_call._cosmo`)
-    # always exists, preventing the AttributeError.
-    timed_call._cosmo = original_cosmo_attribute
-
-    # replace the __call__ method of the *instance*
-    # use types.MethodType to correctly bind the new method to the instance
-    pk2d_object.__call__ = types.MethodType(timed_call, pk2d_object)
-    print(f"New Pk2D __call__ type after instrumentation: {type(pk2d_object.__call__)}")
-
-    # add convenience methods directly to the pk2d_object for easier access
-    pk2d_object.reset_timers = pk2d_object._timer.reset_timers
-    pk2d_object.get_timing_info = pk2d_object._timer.get_timing_info
-
-    print("Pk2D object instrumented for timing.")
-    return pk2d_object
