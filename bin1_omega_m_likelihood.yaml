@@ -45,7 +45,7 @@ params:
       dist: norm
       loc: 0.316
       scale: 0.005  # tight distribution around the center
-    proposal: 0.005
+    proposal: 0.001
     latex: "\\Omega_m"
 
 #'Omega_m': 0.316, # fixed

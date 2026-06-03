@@ -1136,7 +1136,11 @@ class SO_x_DESI_Likelihood(Likelihood):
         Omega_k = kwargs['Omega_k']
         
         Omega_c = Omega_m - Omega_b
-        
+
+        if Omega_m < 0.1 or Omega_m > 0.6:
+            print("omega_m outside of bounds")
+            return -np.inf  # or returns an extremely low likelihood
+    
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c,
             Omega_b=Omega_b,
@@ -1363,7 +1367,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         Omega_k = kwargs['Omega_k']
         Omega_c = Omega_m - Omega_b
 
-        if omega_m < 0.1 or omega_m > 0.6:
+        if Omega_m < 0.1 or Omega_m > 0.6:
             print("omega_m outside of bounds")
             return -np.inf  # or returns an extremely low likelihood
     
