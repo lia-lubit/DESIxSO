@@ -664,46 +664,6 @@ def get_linear_As(cosmology):
     As = fiducial_As * (target_sigma8 / fiducial_sigma8) ** 2
     return As
 
-# create full Pk2D object from our emulator
-# non-linear P(k) = linear P(k) * boost
-#def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
-
-    # the emulator isn't trained past z = 15, and might not be well trained there either
-#    if z_arr is None:
-#        z_arr = np.linspace(0, 10, 500)
-
-    # make grids with our wavelength and redshift values that we'll run the emulator on
-    # sort redshifts in descending order so that scale factors 'a' are ascending
-#    z_sorted_descending = np.sort(z_arr)[::-1] 
-#    a_arr = 1.0 / (1.0 + z_sorted_descending)
-#    lk_arr = np.log(linear_emulator.modes)      
-#    print(lk_arr)
-#    pk_arr = np.zeros((len(a_arr), len(lk_arr)))
-
-#    if boost_emulator == None:
-#        for i, z in enumerate(z_sorted_descending):
-#            pk_arr[i, :] = predict_linear_Pk(cosmology, linear_emulator, z)
-
-#    else:        
-        # loop through all the redshifts and fill in the full P(k) for each 
-        # note that we don't need to explicitly cycle through the k's because we can just past the whole 1D array
-#        for i, z in enumerate(z_sorted_descending):
-#            linear_Pk = predict_linear_Pk(cosmology, linear_emulator, z)
-#            boost_Pk = predict_boost_Pk(cosmology, boost_emulator, z, cmin, eta_0)
-#            non_linear_Pk = linear_Pk * boost_Pk
-#            pk_arr[i, :] = non_linear_Pk
-            
-#    Pk2D = ccl.Pk2D(
-#        a_arr=a_arr,
-#        lk_arr=lk_arr,
-#        pk_arr=pk_arr,
-#        is_logp=False,         # keep False unless your emulator outputs ln(P)
-#        extrap_order_lok=1,    # linear extrapolation for low-k
-#        extrap_order_hik=2     # quadratic extrapolation for high-k
-#    )
-    
-#    return Pk2D
-
 def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     if z_arr is None:
         a_grid = np.linspace(1/(1+5), 1.0, 20)
@@ -1402,7 +1362,11 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         wa = kwargs['wa']
         Omega_k = kwargs['Omega_k']
         Omega_c = Omega_m - Omega_b
-        
+
+        if omega_m < 0.1 or omega_m > 0.6:
+            print("omega_m outside of bounds")
+            return -np.inf  # or returns an extremely low likelihood
+    
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c,
             Omega_b=Omega_b,
