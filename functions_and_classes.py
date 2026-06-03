@@ -81,10 +81,7 @@ def calculate_and_plot_Cls(
         lens_tracers_nc.append(tracer)
     for i, n_z_source_bin in enumerate(n_source_dists):
             # use a constant linear bias of 1
-            bias_values = np.ones_like(z_source_grid)
-            tracer = ccl.WeakLensingTracer(cosmology, has_rsd=False,
-                                            dndz=(z_source_grid, n_z_source_bin),
-                                            bias=(z_source_grid, bias_values))
+            tracer = ccl.WeakLensingTracer(cosmology, dndz=(z_source_grid, n_z_source_bin))
             lensing_tracers_nc.append(tracer)
 
     # create CMB lensing tracerrs
