@@ -1,7 +1,7 @@
 #Cobaya!
 
 likelihood:
-  functions_and_classes.SO_x_DESI_Likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_sigma8_version:
     python_path: "likelihoods"
 
     data_specs:
@@ -17,8 +17,8 @@ likelihood:
       cmb_noise_phi_path: data/SO_CMB_noise.npy
       shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/single_bin_data_vector.npy
-      covariance_path: cobaya_data/single_bin_covariance_matrix.npy
+      data_vector_path: cobaya_data/single_bin_data_vector_sigma8.npy
+      covariance_path: cobaya_data/single_bin_covariance_matrix_sigma8.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
@@ -27,7 +27,7 @@ likelihood:
         Omega_c: 0.27
         Omega_b: 0.045
         h: 0.674
-        A_s: 2.105e-9
+        sigma8: 0.8
         n_s: 0.96
         w0: -1.0
         wa: 0.0
@@ -62,9 +62,9 @@ params:
    # proposal: 0.01
   #  latex: "\\sigma_8"
 
-  #sigma8: 0.8
+  sigma8: 0.8
 
-  A_s: 2.105e-9 
+  #A_s: 2.105e-9 
 #### CHANGE THE LATER PARAMS BEFORE RUNNING THIS WITH MORE OF THEM UNFIXED 
 #### I expect I'll need to modify the scales etc -- I made things too large to begin with.
   # 'h':
@@ -145,4 +145,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma8_version

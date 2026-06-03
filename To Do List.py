@@ -1,11 +1,11 @@
 COBAYA PROJECT TODO LIST
-1. write out standard syntax to run on NERSC
-2. fix emulator errors    
-3. rerun omega_m and check results
-4. run for omega_m and sigma_8 --> if lensing ratios are working as we think, we should not be constraining sigma8 at all (or a_s)
+0. get chi 2 for diff omega_m
+    minimizer?
 
+when you use the emulator,make it self consistent -- use it in the covariance and data vector too
 
 Later
+0. run for omega_m and sigma_8 --> if lensing ratios are working as we think, we should not be constraining sigma8 at all (or a_s)
 1. Make trace and corner plot functions in functions_and_classes.py to make this clean
 2. Make covariance and data saving function?
 

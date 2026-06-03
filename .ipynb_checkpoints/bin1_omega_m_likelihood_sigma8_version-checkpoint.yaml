@@ -145,4 +145,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma_8
