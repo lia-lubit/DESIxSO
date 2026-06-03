@@ -1929,5 +1929,3 @@ def instrument_Pk2D(pk2d_object):
 
     print("Pk2D object instrumented for timing.")
     return pk2d_object
-
-    

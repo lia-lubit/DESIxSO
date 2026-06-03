@@ -34,16 +34,6 @@ likelihood:
         w0: -1.0
         wa: 0.0
         Omega_k: 0.0
-    input_params:
-    - Omega_m
-    - sigma8
-    - h
-    - Omega_b
-    - n_s
-    - w0
-    - wa
-    - Omega_k
-    output_params: []
 params:
   Omega_m:
     prior:
@@ -112,6 +102,6 @@ sampler:
     oversample: null
     drag_limits: null
     fallback_covmat_scale: 4
-    version: 3.6.2
+    version: null
 output: cobaya_so_x_desi_forecast_bin1_omega_m_sigma8_version
 version: 3.6.2

@@ -1,7 +1,7 @@
 #Cobaya!
 
 likelihood:
-  functions_and_classes.SO_x_DESI_Likelihood_original:
+  original_functions_and_classes.SO_x_DESI_Likelihood:
     python_path: "likelihoods"
 
     data_specs:

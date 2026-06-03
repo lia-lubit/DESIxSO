@@ -1,6 +1,7 @@
 COBAYA PROJECT TODO LIST
 0. get chi 2 for diff omega_m
     minimizer?
+visualize spectra for diff omega_m? not sure what this was about 
 
 when you use the emulator,make it self consistent -- use it in the covariance and data vector too
 
