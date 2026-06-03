@@ -232,7 +232,7 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
     if linear_emulator != None:
         a_grid = np.linspace(1/(1+5), 1.0, 20)
         z_grid = (1.0 / a_grid) - 1.0
-        Pk2D_object = make_Pk2D(cosmo, linear_emulator = linear_emulator, boost_emulator = boost_emulator, z_arr = z_grid, cmin = 3.13, eta_0 = 0.68)
+        Pk2D_object = make_Pk2D(cosmo, linear_emulator = linear_emulator, boost_emulator = boost_emulator, z_arr = z_grid, cmin = 3.13, eta_0 = 0.60)
 
     # Iterate through all unique pairs of tracers in tracer_dict to calculate Cls
     tracer_labels = list(tracer_dict.keys())
@@ -706,8 +706,9 @@ def get_linear_As(cosmology):
 
 def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     if z_arr is None:
-        z_arr = np.linspace(0, 10, 500)
-
+        a_grid = np.linspace(1/(1+5), 1.0, 20)
+        z_arr = (1.0 / a_grid) - 1.0
+        
     z_sorted_descending = np.sort(z_arr)[::-1]
     a_arr = 1.0 / (1.0 + z_sorted_descending)
     
