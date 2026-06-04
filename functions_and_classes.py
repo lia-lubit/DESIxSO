@@ -224,6 +224,41 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
 
     return noise_dict
 
+# build spectra dictionary
+def build_spectra_dict_old(cosmo, f_map, tracer_dict, ells, noise_dict=None):
+    spectra_dict = {}
+
+    # Iterate through all unique pairs of tracers in tracer_dict to calculate Cls
+    tracer_labels = list(tracer_dict.keys())
+    for i, label1 in enumerate(tracer_labels):
+        for j, label2 in enumerate(tracer_labels):
+            # ensure consistent key ordering (e.g., ('g1', 'l1') not ('l1', 'g1'))
+            # only calculate each unique pair once
+            key_fwd = (label1, label2)
+            key_bwd = (label2, label1)
+
+            if key_fwd in spectra_dict or key_bwd in spectra_dict: # spectra already handled
+                continue
+            else:
+                tracer1 = tracer_dict[label1]
+                tracer2 = tracer_dict[label2]
+                Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells)
+
+            # store with canonical ordering
+            if label1 < label2: # Simple lexicographical order for consistency
+                spectra_dict[(label1, label2)] = Cl
+            else:
+                spectra_dict[(label2, label1)] = Cl # Store with smaller label first
+
+    # add noise terms
+    if noise_dict is not None:
+        for key_noise, noise_val in noise_dict.items():
+            # only add noise to auto-spectra.
+            if key_noise[0] == key_noise[1]:
+                spectra_dict[key_noise] += noise_val
+
+    return spectra_dict
+
 # build spectra dictionary w/ or w/o emulator
 def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None):
     spectra_dict = {}
@@ -1126,7 +1161,8 @@ class SO_x_DESI_Likelihood(Likelihood):
         #ccl_data = kwargs['CCL']
         #current_cosmology = ccl_data.get_cosmology()
 
-        Omega_m = kwargs['Omega_m']
+        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
+        #Omega_m = kwargs['Omega_m']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
         A_s = kwargs['A_s']
@@ -1160,7 +1196,7 @@ class SO_x_DESI_Likelihood(Likelihood):
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict)
+        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=None, boost_emulator=None)
 
         # flatten the current Cls into a model data vector 'M'
         model_data_vector = np.array([])
@@ -1356,7 +1392,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         #ccl_data = kwargs['CCL']
         #current_cosmology = ccl_data.get_cosmology()
 
-        Omega_m = kwargs['Omega_m']
+        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
+        #Omega_m = kwargs['Omega_m']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
         A_s = kwargs['A_s']
@@ -1578,7 +1615,8 @@ class SO_x_DESI_Likelihood_sigma8_version(Likelihood):
         #ccl_data = kwargs['CCL']
         #current_cosmology = ccl_data.get_cosmology()
 
-        Omega_m = kwargs['Omega_m']
+        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
+        #Omega_m = kwargs['Omega_m']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
         sigma8 = kwargs['sigma8']
@@ -1612,7 +1650,7 @@ class SO_x_DESI_Likelihood_sigma8_version(Likelihood):
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict)
+        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator = None, boost_emulator = None)
 
         # flatten the current Cls into a model data vector 'M'
         model_data_vector = np.array([])
@@ -1754,7 +1792,9 @@ class SO_x_DESI_Likelihood_original(Likelihood):
                     shape_noise_source=self.shape_noise_source,
                     cmb_noise_phi=self.cmb_noise_phi,
                     magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra
+                    desired_spectra=self.desired_spectra,
+                    linear_emulator=None,
+                    boost_emulator=None
                 )
             self.covariance_matrix = self.cov_obj.matrix # Store the full matrix
 
@@ -1798,7 +1838,8 @@ class SO_x_DESI_Likelihood_original(Likelihood):
         #ccl_data = kwargs['CCL']
         #current_cosmology = ccl_data.get_cosmology()
 
-        Omega_m = kwargs['Omega_m']
+        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
+        #Omega_m = kwargs['Omega_m']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
         sigma8 = kwargs['sigma8']
@@ -1830,7 +1871,7 @@ class SO_x_DESI_Likelihood_original(Likelihood):
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict)
+        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator = None, boost_emulator = None)
 
         # flatten the current Cls into a model data vector 'M'
         model_data_vector = np.array([])

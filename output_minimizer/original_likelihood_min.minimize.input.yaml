@@ -34,10 +34,10 @@ params:
   Omega_m:
     prior:
       dist: norm
-      loc: 0.315
+      loc: 0.316
       scale: 0.025
-    ref: 0.315
-    proposal: 0.001
+    ref: 0.316
+    proposal: 0.01
     latex: \Omega_m
   sigma8: 0.8
   h: 0.674
@@ -47,9 +47,12 @@ params:
   wa: 0.0
   Omega_k: 0.0
 sampler:
-  mcmc:
-    Rminus1_stop: 0.01
-    max_samples: 10000
-    proposal_scale: 1.5
-    seed: 12345
-output: cobaya_so_x_desi_forecast_single_bin_original
+  minimize:
+    method: bobyqa
+    ignore_prior: false
+    max_evals: 1e6d
+    best_of: 2
+    confidence_for_unbounded: 0.9999995
+    seed: 1234
+    covmat: null
+output: original_likelihood_min

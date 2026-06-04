@@ -1,7 +1,7 @@
 #Cobaya!
 
 likelihood:
-  original_functions_and_classes.SO_x_DESI_Likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_original:
     python_path: "likelihoods"
 
     data_specs:
@@ -17,8 +17,8 @@ likelihood:
       cmb_noise_phi_path: data/SO_CMB_noise.npy
       shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/original_single_bin_data_vector.npy
-      covariance_path: cobaya_data/original_single_bin_covariance_matrix.npy
+      data_vector_path: cobaya_data/single_bin_data_vector.npy
+      covariance_path: cobaya_data/single_bin_covariance_matrix.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
@@ -39,10 +39,10 @@ params:
   Omega_m:
     prior:
       dist: norm
-      loc: 0.315
+      loc: 0.3
       scale: 0.025
-    ref: 0.315
-    proposal: 0.001
+    ref: 0.3
+    proposal: 0.01
     latex: "\\Omega_m"
 
   # 'Omega_m': 0.3, # fixed
@@ -124,7 +124,7 @@ params:
 
   Omega_k: 0.0
 
-# sampler settings
+# sampler settingsF
 sampler:
   mcmc:
     Rminus1_stop: 0.01

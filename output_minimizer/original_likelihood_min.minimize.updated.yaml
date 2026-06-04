@@ -48,10 +48,10 @@ params:
   Omega_m:
     prior:
       dist: norm
-      loc: 0.315
+      loc: 0.316
       scale: 0.025
-    ref: 0.315
-    proposal: 0.001
+    ref: 0.316
+    proposal: 0.01
     latex: \Omega_m
   sigma8:
     derived: false
@@ -75,40 +75,21 @@ params:
     derived: false
     value: 0.0
 sampler:
-  mcmc:
-    sampler_type: mcmc
-    supports_periodic_params: true
-    burn_in: 0
-    max_tries: 40d
+  minimize:
+    method: bobyqa
+    ignore_prior: false
+    max_evals: 1e6d
+    best_of: 2
+    confidence_for_unbounded: 0.9999995
+    seed: 1234
+    override_scipy: null
+    override_bobyqa:
+      rhoend: 0.05
+    override_iminuit: null
     covmat: null
     covmat_params: null
-    proposal_scale: 1.5
-    output_every: 60s
-    learn_every: 40d
-    temperature: 1
-    learn_proposal: true
-    learn_proposal_Rminus1_max: 2.0
-    learn_proposal_Rminus1_max_early: 30.0
-    learn_proposal_Rminus1_min: 0.0
-    max_samples: 10000
-    Rminus1_stop: 0.01
-    Rminus1_cl_stop: 0.2
-    Rminus1_cl_level: 0.95
-    Rminus1_single_split: 4
-    measure_speeds: true
-    oversample_power: 0.4
-    oversample_thin: true
-    drag: false
-    blocking:
-    - - 1
-      - - Omega_m
-    callback_function: null
-    callback_every: null
-    seed: 12345
-    check_every: null
-    oversample: null
-    drag_limits: null
+    version: null
+    supports_periodic_params: false
     fallback_covmat_scale: 4
-    version: 3.6.2
-output: cobaya_so_x_desi_forecast_single_bin_original
+output: original_likelihood_min
 version: 3.6.2

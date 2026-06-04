@@ -39,10 +39,10 @@ params:
   Omega_m:
     prior:
       dist: norm
-      loc: 0.315
+      loc: 0.316
       scale: 0.025
-    ref: 0.315
-    proposal: 0.001
+    ref: 0.316
+    proposal: 0.01
     latex: "\\Omega_m"
 
   # 'Omega_m': 0.3, # fixed
@@ -124,16 +124,19 @@ params:
 
   Omega_k: 0.0
 
-# sampler settings
+# sampler settingsF
 sampler:
-  mcmc:
-    Rminus1_stop: 0.01
-    max_samples: 10000
-    proposal_scale: 1.5
-    seed: 12345
+  minimize: 
+    method: bobyqa
+    ignore_prior: False
+    max_evals: 1e6d
+    best_of: 2
+    confidence_for_unbounded: 0.9999995  # 5 sigmas of the prior
+    seed:  1234
+    covmat:
 
 # theory
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_single_bin_original
+output: output_minimizer/original_likelihood_min
