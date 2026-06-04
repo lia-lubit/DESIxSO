@@ -1,2 +1,0 @@
-#        weight    minuslogpost         Omega_m   minuslogprior minuslogprior__0            chi2 chi2__original_functions_and_classes.SO_x_DESI_Likelihood
-              1       28110.439      0.31621574      -2.7699037       -2.7699037       56226.417                                                 56226.417

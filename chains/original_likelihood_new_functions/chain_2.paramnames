@@ -1,6 +1,6 @@
 theory: null
 likelihood:
-  original_functions_and_classes.SO_x_DESI_Likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_original:
     python_path: likelihoods
     data_specs:
       f_sky: 0.4
@@ -34,10 +34,10 @@ params:
   Omega_m:
     prior:
       dist: norm
-      loc: 0.316
+      loc: 0.315
       scale: 0.025
-    ref: 0.316
-    proposal: 0.01
+    ref: 0.315
+    proposal: 0.001
     latex: \Omega_m
   sigma8: 0.8
   h: 0.674
@@ -47,12 +47,9 @@ params:
   wa: 0.0
   Omega_k: 0.0
 sampler:
-  minimize:
-    method: bobyqa
-    ignore_prior: false
-    max_evals: 1e6d
-    best_of: 2
-    confidence_for_unbounded: 0.9999995
-    seed: 1234
-    covmat: null
-output: original_likelihood_min
+  mcmc:
+    Rminus1_stop: 0.01
+    max_samples: 10000
+    proposal_scale: 1.5
+    seed: 1236
+output: chain
