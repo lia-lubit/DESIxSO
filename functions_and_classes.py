@@ -1871,7 +1871,7 @@ class SO_x_DESI_Likelihood_original(Likelihood):
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator = None, boost_emulator = None)
+        current_spectra_dict = build_spectra_dict_old(current_cosmology, self.f_map, tracer_dict, ells, noise_dict)
 
         # flatten the current Cls into a model data vector 'M'
         model_data_vector = np.array([])
