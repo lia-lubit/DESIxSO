@@ -353,13 +353,13 @@ def build_covariance_from_data(
     f_sky,
     n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation
     binsize=1,  # New parameter for binning
-    shot_noise_lens = None,
+    shot_noise_lens=None,
     shape_noise_source=None,
     cmb_noise_phi=None,
     magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
     desired_spectra=None,
-    linear_emulator = None,
-    boost_emulator = None
+    linear_emulator=None,
+    boost_emulator=None
 ):
 
     # ForecastMap still works with the total number of ell values (unbinned)
