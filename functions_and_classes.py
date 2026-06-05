@@ -343,6 +343,7 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
 
     # Remove duplicates (though with the current logic, there shouldn't be any)
     # and ensure it's a list of tuples
+    print(list(sorted(list(set(all_pairs)))))
     return list(sorted(list(set(all_pairs)))) # Sort for deterministic order
 
 def build_covariance_from_data_old(
