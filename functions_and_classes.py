@@ -345,10 +345,9 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
     # and ensure it's a list of tuples
     return list(sorted(list(set(all_pairs)))) # Sort for deterministic order
 
-# build covariance matrix w or w/o emulator (full unless otherwise specified)
-def build_covariance_from_data(
+def build_covariance_from_data_old(
     cosmo,
-    lens_data,
+    lens_data,Somet
     source_data,
     f_sky,
     n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation
@@ -357,9 +356,7 @@ def build_covariance_from_data(
     shape_noise_source=None,
     cmb_noise_phi=None,
     magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
-    desired_spectra=None,
-    linear_emulator=None,
-    boost_emulator=None
+    desired_spectra=None
 ):
 
     # ForecastMap still works with the total number of ell values (unbinned)
@@ -377,7 +374,48 @@ def build_covariance_from_data(
     lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
     noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
-    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict, linear_emulator, boost_emulator)
+    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict)
+
+    # build covariance -- now pass the binsize to CovarianceMatrix
+    cov = CovarianceMatrix(f_map, spectra_dict, f_sky, binsize=binsize)
+
+    return cov, spectra_dict, f_map
+    
+# build covariance matrix w or w/o emulator (full unless otherwise specified)
+def build_covariance_from_data(
+    cosmo,
+    lens_data,
+    source_data,
+    f_sky,
+    n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation
+    binsize=1,  # New parameter for binning
+    shot_noise_lens=None,
+    shape_noise_source=None,
+    cmb_noise_phi=None,
+    magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
+    desired_spectra=None):
+#    linear_emulator=None,
+#    boost_emulator=None
+#):
+
+    # ForecastMap still works with the total number of ell values (unbinned)
+    if desired_spectra:
+        desired_pairs = create_simplified_desired_pairs(lens_data.shape[1]-1, source_data.shape[1]-1, desired_spectra)
+    else:
+        desired_pairs = None
+
+    f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=desired_pairs)
+
+    # Use the full range of unbinned ells for CCL calculations
+    ells = np.arange(2, n_ell + 2)
+
+    # build spectra
+    lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
+    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+    noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
+    #spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict, linear_emulator=None, boost_emulator=None)
+
+    spectra_dict = build_spectra_dict_old(cosmo, f_map, tracer_dict, ells, noise_dict)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
     cov = CovarianceMatrix(f_map, spectra_dict, f_sky, binsize=binsize)
