@@ -347,7 +347,7 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
 
 def build_covariance_from_data_old(
     cosmo,
-    lens_data,Somet
+    lens_data,
     source_data,
     f_sky,
     n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation

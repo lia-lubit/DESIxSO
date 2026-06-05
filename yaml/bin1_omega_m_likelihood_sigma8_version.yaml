@@ -17,8 +17,8 @@ likelihood:
       cmb_noise_phi_path: data/SO_CMB_noise.npy
       shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/single_bin_data_vector_sigma8_version.npy
-      covariance_path: cobaya_data/single_bin_covariance_matrix_sigma8_version.npy
+      data_vector_path: cobaya_data/original_single_bin_data_vector.npy
+      covariance_path: cobaya_data/original_single_bin_covariance_matrix.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
@@ -41,10 +41,10 @@ params:
       dist: norm
       loc: 0.316
       scale: 0.015
-    ref:
-      dist: norm
-      loc: 0.316
-      scale: 0.005  # tight distribution around the center
+    ref: 0.315
+  #    dist: norm
+  #    loc: 0.315
+  #    scale: 0.005  # tight distribution around the center
     proposal: 0.001
     latex: "\\Omega_m"
 
@@ -145,4 +145,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma8_version
+output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma8_version_w_old_matrices_and_vectors
