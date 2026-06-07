@@ -13,12 +13,12 @@ likelihood:
       lens_data_path: data/DESI_lens_data_bin1.npy
       source_data_path: data/HSC_dist_0_3_bin1.npy
 
-      shot_noise_lens_path: data/DESI_shot_noise_bin1.npy
+      shot_noise_path: data/DESI_shot_noise_bin1.npy
       cmb_noise_phi_path: data/SO_CMB_noise.npy
-      shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
+      shape_noise_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/original_single_bin_data_vector.npy
-      covariance_path: cobaya_data/original_single_bin_covariance_matrix.npy
+      data_vector_path: cobaya_data/single_bin_data_vector_sigma8_version.npy
+      covariance_path: cobaya_data/single_bin_covariance_matrix_sigma8_version.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
@@ -145,4 +145,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma8_version_w_old_matrices_and_vectors
+output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_sigma8_version_w_noise
