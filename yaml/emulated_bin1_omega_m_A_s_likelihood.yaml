@@ -38,26 +38,20 @@ params:
 
   'Omega_m':
     prior:
-         min: 0.25
-         max: 0.35
+         min: 0.265
+         max: 0.365
     ref: 0.315
     proposal: 0.005
     latex: "\\Omega_m"
 
-  #  A_s:
-  #    prior:
-  #      dist: norm
-  #      loc: 2.105e-9
-  #      scale: ???????
-  #    ref:
-  #      dist: norm
-  #      loc: 2.105e-9
-  #      scale: 0.01
-  #    proposal: ?????????
-  #    latex: "\\sigma_8"
+  'A_s':
+    prior:
+      min: 1.605e-9
+      max: 2.605e-9
+    ref: 2.105e-9
+    proposal: 0.05e-9
+    latex: "A_s"
   
-  A_s: 2.105e-9
-
   # 'h':
   #   prior:
   #     dist: norm
@@ -128,8 +122,7 @@ params:
 sampler:
   mcmc:
     Rminus1_stop: 0.01
-    max_samples: 1500
-    #max_samples: 10000
+    max_samples: 20000
     proposal_scale: 1.5
     seed: 1234
 
@@ -137,4 +130,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_emulated_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_emulated_forecast_bin1_omega_m_A_s
