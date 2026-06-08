@@ -1,7 +1,7 @@
 #Cobaya!
 
 likelihood:
-  functions_and_classes.SO_x_DESI_Likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_A_s_version:
     python_path: "likelihoods"
 
     data_specs:
@@ -13,12 +13,12 @@ likelihood:
       lens_data_path: data/DESI_lens_data_bin1.npy
       source_data_path: data/HSC_dist_0_3_bin1.npy
 
-      shot_noise_lens_path: data/DESI_shot_noise_bin1.npy
+      shot_noise_path: data/DESI_shot_noise_bin1.npy
       cmb_noise_phi_path: data/SO_CMB_noise.npy
-      shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
+      shape_noise_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/single_bin_data_vector.npy
-      covariance_path: cobaya_data/single_bin_covariance_matrix.npy
+      data_vector_path: cobaya_data/single_bin_data_vector_A_s_version.npy
+      covariance_path: cobaya_data/single_bin_covariance_matrix__A_s_version.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
@@ -41,30 +41,18 @@ params:
       dist: norm
       loc: 0.316
       scale: 0.015
-    ref:
-      dist: norm
-      loc: 0.316
-      scale: 0.005  # tight distribution around the center
+    ref: 0.315
+  #    dist: norm
+  #    loc: 0.315
+  #    scale: 0.005  # tight distribution around the center
     proposal: 0.001
     latex: "\\Omega_m"
 
 #'Omega_m': 0.316, # fixed
 
-  #'sigma8':
-    #prior:
-      #dist: norm
-      #loc: 0.8
-     # scale: 0.05
-    #ref:
-      #dist: norm
-     # loc: 0.8
-    #  scale: 0.01
-   # proposal: 0.01
-  #  latex: "\\sigma_8"
+  A_s: 2.105e-9
 
-  #sigma8: 0.8
-
-  A_s: 2.105e-9 
+  #A_s: 2.105e-9 
 #### CHANGE THE LATER PARAMS BEFORE RUNNING THIS WITH MORE OF THEM UNFIXED 
 #### I expect I'll need to modify the scales etc -- I made things too large to begin with.
   # 'h':
@@ -145,4 +133,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_forecast_bin1_omega_m_A_s_version
