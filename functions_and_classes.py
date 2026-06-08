@@ -410,11 +410,13 @@ def build_covariance_from_data(
     # Use the full range of unbinned ells for CCL calculations
     ells = np.arange(2, n_ell + 2)
 
+    cosmo.compute_growth()
+    
     # build spectra
     lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
     noise_dict = build_noise_dict(f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
-    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict, linear_emulator=None, boost_emulator=None)
+    spectra_dict = build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
     cov = CovarianceMatrix(f_map, spectra_dict, f_sky, binsize=binsize)
@@ -1344,7 +1346,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
 
     params = {
         "Omega_m": None, # matter density
-        "A_s": None,      # amplitude of primordial fluctuations
+        "A_s": None,     # amplitude of primordial fluctuations
         "h": None,       # Hubble parameter
         "Omega_b": None, # baryon density
         "n_s": None,     # primordial tilt
@@ -1582,7 +1584,77 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
 
         return log_likelihood
-
+    
+    def profile_chi2(self, **kwargs):
+        """
+        Computes and prints the components of the chi-squared 
+        for the current parameter evaluation.
+        """
+        # Pull parameters from kwargs or fall back to your fiducial specs
+        Omega_m = kwargs.get('Omega_m', 0.315)
+        Omega_b = kwargs.get('Omega_b', 0.045)
+        Omega_c = Omega_m - Omega_b
+        
+        h = kwargs.get('h', 0.674)
+        A_s = kwargs.get('A_s', 2.105e-9)
+        n_s = kwargs.get('n_s', 0.96)
+        w0 = kwargs.get('w0', -1.0)
+        wa = kwargs.get('wa', 0.0)
+        Omega_k = kwargs.get('Omega_k', 0.0)
+        
+        # 1. Initialize the cosmology using CCL
+        current_cosmology = ccl.Cosmology(
+            Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
+            n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
+            transfer_function='boltzmann_camb'
+        )
+        current_cosmology.compute_growth()
+        
+        # 2. Build tracers and noise dictionaries
+        ells = np.arange(2, self.n_ell + 2)
+        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses
+        )
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi)
+        
+        # 3. Call your emulators via your spectra builder
+        current_spectra_dict = build_spectra_dict(
+            current_cosmology, self.f_map, tracer_dict, ells, noise_dict, 
+            linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator
+        )
+        
+        # 4. Flatten the current Cls into the binned model data vector 'M'
+        model_data_vector = np.array([])
+        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
+        
+        for pair in self.f_map.pairs:
+            unbinned_cls = current_spectra_dict[pair]
+            binned_cls_for_pair = []
+            for i in range(0, self.n_ell, self.binsize):
+                end_idx = min(i + self.binsize, len(unbinned_cls))
+                if i < end_idx:
+                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
+                else:
+                    binned_cls_for_pair.append(0.0)
+            
+            while len(binned_cls_for_pair) < num_binned_ells:
+                binned_cls_for_pair.append(0.0)
+                
+            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
+        
+        # 5. Calculate the residual vector (D - M)
+        difference_vector = self.observed_data_vector - model_data_vector
+        
+        # 6. Calculate Chi-squared: r^T * InvCov * r
+        chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
+        
+        print(f"--- Debugging Chi2 Evaluation ---")
+        print(f"Omega_m evaluated: {Omega_m:.4f} (Omega_c: {Omega_c:.4f})")
+        print(f"Total Chi2: {chi2:.4f}")
+        
+        return chi2
+        
 # make SO DESI Likelihood class
 ### I've realized that it's not handling the noise well at all
 class SO_x_DESI_Likelihood_sigma8_version(Likelihood):
@@ -2065,3 +2137,74 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
         log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
 
         return log_likelihood
+
+    def profile_chi2(self, **kwargs):
+        """
+        Computes and prints the components of the chi-squared 
+        for the current parameter evaluation.
+        """
+        # Pull parameters from kwargs or fall back to your fiducial specs
+        Omega_m = kwargs.get('Omega_m', 0.315)
+        Omega_b = kwargs.get('Omega_b', 0.045)
+        Omega_c = Omega_m - Omega_b
+        
+        h = kwargs.get('h', 0.674)
+        A_s = kwargs.get('A_s', 2.105e-9)
+        n_s = kwargs.get('n_s', 0.96)
+        w0 = kwargs.get('w0', -1.0)
+        wa = kwargs.get('wa', 0.0)
+        Omega_k = kwargs.get('Omega_k', 0.0)
+        
+        # 1. Initialize the cosmology using CCL
+        current_cosmology = ccl.Cosmology(
+            Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
+            n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
+            transfer_function='boltzmann_camb'
+        )
+        current_cosmology.compute_growth()
+        
+        # 2. Build tracers and noise dictionaries
+        ells = np.arange(2, self.n_ell + 2)
+        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses
+        )
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        noise_dict = build_noise_dict(
+            self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi
+        )
+        
+        # 3. Call your emulators via your spectra builder
+        current_spectra_dict = build_spectra_dict(
+            current_cosmology, self.f_map, tracer_dict, ells, noise_dict, 
+            linear_emulator=None, boost_emulator=None)
+        
+        # 4. Flatten the current Cls into the binned model data vector 'M'
+        model_data_vector = np.array([])
+        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
+        
+        for pair in self.f_map.pairs:
+            unbinned_cls = current_spectra_dict[pair]
+            binned_cls_for_pair = []
+            for i in range(0, self.n_ell, self.binsize):
+                end_idx = min(i + self.binsize, len(unbinned_cls))
+                if i < end_idx:
+                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
+                else:
+                    binned_cls_for_pair.append(0.0)
+            
+            while len(binned_cls_for_pair) < num_binned_ells:
+                binned_cls_for_pair.append(0.0)
+                
+            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
+        
+        # 5. Calculate the residual vector (D - M)
+        difference_vector = self.observed_data_vector - model_data_vector
+        
+        # 6. Calculate Chi-squared: r^T * InvCov * r
+        chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
+        
+        print(f"--- Debugging Chi2 Evaluation ---")
+        print(f"Omega_m evaluated: {Omega_m:.4f} (Omega_c: {Omega_c:.4f})")
+        print(f"Total Chi2: {chi2:.4f}")
+        
+        return chi2

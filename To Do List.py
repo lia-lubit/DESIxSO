@@ -2,8 +2,8 @@ COBAYA PROJECT TODO LIST
 0. get chi 2 for diff omega_m
     minimizer?
 visualize spectra for diff omega_m? not sure what this was about 
-
-when you use the emulator,make it self consistent -- use it in the covariance and data vector too
+1. organize
+2. figure out why its not working with the emulator and fix
 
 Later
 0. run for omega_m and sigma_8 --> if lensing ratios are working as we think, we should not be constraining sigma8 at all (or a_s)

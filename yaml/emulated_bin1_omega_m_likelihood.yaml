@@ -13,9 +13,9 @@ likelihood:
       lens_data_path: data/DESI_lens_data_bin1.npy
       source_data_path: data/HSC_dist_0_3_bin1.npy
 
-      shot_noise_lens_path: data/DESI_shot_noise_bin1.npy
+      shot_noise_path: data/DESI_shot_noise_bin1.npy
       cmb_noise_phi_path: data/SO_CMB_noise.npy
-      shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
+      shape_noise_path: data/DESI_shape_noise_bin1.npy
 
       data_vector_path: cobaya_data/emulated_single_bin_data_vector.npy
       covariance_path: cobaya_data/emulated_single_bin_covariance_matrix.npy
@@ -41,11 +41,13 @@ params:
       dist: norm
       loc: 0.316
       scale: 0.015
+    min: 0.2
+    max: 0.4
     ref: 0.315
   #    dist: norm
   #    loc: 0.315
   #    scale: 0.005  # tight distribution around the center
-    proposal: 0.001
+    proposal: 0.005
     latex: "\\Omega_m"
 
   #  A_s:
