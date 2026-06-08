@@ -1338,10 +1338,8 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
 
         return log_likelihood
 
-# make likelihood class that uses emulator for calculated spectra 
-# the emulator is not used for the initial covariance and data vectors 
-# -- those don't take long to make and so I figure we should keep the accuracy up
 # make SO DESI Likelihood class w/emulator
+# the emulator needs to be used for the covariance matrix and data vector too, to ensure self-consistency
 class SO_x_DESI_Likelihood_w_emulator(Likelihood):
 
     params = {
@@ -1375,10 +1373,27 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses', 0.8)
         self.desired_spectra = self.data_specs.get('desired_spectra', ['GG', 'LL', 'GL', 'CC', 'CL', 'CG'])
 
-        # noise parameters, also sourced from data_specs, with default 'None'
-        self.shot_noise_lens = self.data_specs.get('shot_noise_lens', None)
-        self.shape_noise_source = self.data_specs.get('shape_noise_source', None)
-        self.cmb_noise_phi = self.data_specs.get('cmb_noise_phi', None)
+        # noise parameters, loaded from files, with default 'None'
+        shot_noise_path = self.data_specs.get('shot_noise_path')
+        if shot_noise_path:
+            print(f"  Loading lens shot noise from: {shot_noise_path}")
+            self.shot_noise_lens = np.load(shot_noise_path)
+        else:
+            self.shot_noise_lens = None
+
+        shape_noise_path = self.data_specs.get('shape_noise_path')
+        if shape_noise_path:
+            print(f"  Loading source shape noise from: {shape_noise_path}")
+            self.shape_noise_source = np.load(shape_noise_path)
+        else:
+            self.shape_noise_source = None
+
+        cmb_noise_path = self.data_specs.get('cmb_noise_phi_path')
+        if cmb_noise_path:
+            print(f"  Loading CMB noise from: {cmb_noise_path}")
+            self.cmb_noise_phi = np.load(cmb_noise_path)
+        else:
+            self.cmb_noise_phi = None
 
         # retrieve lens and source data arrays dynamically.
         # these are expected to be available as global variables in the notebook
@@ -1458,8 +1473,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
                     cmb_noise_phi=self.cmb_noise_phi,
                     magnification_bias_lenses=self.magnification_bias_lenses,
                     desired_spectra=self.desired_spectra,
-                    linear_emulator=None,
-                    boost_emulator=None
+                    linear_emulator=self.linear_emulator,
+                    boost_emulator=self.boost_emulator
                 )
             self.covariance_matrix = self.cov_obj.matrix 
 

@@ -18,7 +18,7 @@ likelihood:
       shape_noise_path: data/DESI_shape_noise_bin1.npy
 
       data_vector_path: cobaya_data/single_bin_data_vector_A_s_version.npy
-      covariance_path: cobaya_data/single_bin_covariance_matrix__A_s_version.npy
+      covariance_path: cobaya_data/single_bin_covariance_matrix_A_s_version.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
