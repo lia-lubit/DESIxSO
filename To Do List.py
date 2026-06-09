@@ -1,8 +1,9 @@
 COBAYA PROJECT TODO LIST
-1. run for A_s and omega_m with just k_c x g and k_g x g in data vector/cov matrix (cmb lensing -- galaxy density, galaxy-lensing, galaxy-density)
-2. is the matrix and vector different if only ever consider a subset? or will the subset of the vector that you keep be identical to the subset of the full one? -- usually eg the covariance matrix for k_c x g and k_g x g will have g x g terms, etc. -- what becomes of those?
-3. why is theplotting not working?
-    
+0. fix slice covariance matrix functions
+1. figure out if the covariance matrix and data vector are good
+2. run again for A_s and omega_m  with just k_c x g and k_g x g in data vector/cov matrix (cmb lensing -- galaxy density, galaxy-lensing, galaxy-density)
+
+
 2. run for omega_m and sigma_8 with slight variation in starting points (right now its running with them all starting at the same time)
 3. figure out what we expect given degeneracy
 4. figure out how exactly this is using the lensing ratios...
