@@ -382,24 +382,27 @@ def build_covariance_from_data(
     if desired_spectra is None:
         return full_cov, full_spectra_dict, full_f_map
     else:
-        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, 
-                                   desired_pairs=create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra))
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
-        sliced_tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        sliced_noise_dict = build_noise_dict(sliced_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
-        sliced_spectra_dict = build_spectra_dict(cosmo, sliced_f_map, sliced_tracer_dict, ells, sliced_noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
-        #### FIX -- this is giving a matrix, not a CovarianceMatrix object
+        print("Slicing...")
+        print("Desired spectra: ", desired_spectra)
+        print("")
+        sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
+        print("Sliced pairs: ", sliced_pairs)
+        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
+        # Loop over full_spectra_dict to preserve its original, chronological block order
+        ##### CHECK
+        sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
         sliced_cov = slice_matrix(full_cov, full_spectra_dict, full_f_map, binsize=binsize, desired_spectra=desired_spectra)
         return sliced_cov, sliced_spectra_dict, sliced_f_map
 
 # slice vector and matrix given desired pairs
 ##### CHECK
+##### Modify to make the return sliced matrix a real CovarianceMatrix object?
 def slice_matrix(
-    cov_obj,
-    spectra_dict,
-    f_map,
-    binsize=1, # New parameter for binning
-    desired_spectra = None,
+    cov_obj, 
+    spectra_dict, 
+    f_map, 
+    binsize=1, 
+    desired_spectra=None
 ):
 
     shorthand_map = {
@@ -412,7 +415,7 @@ def slice_matrix(
     }
     
     if desired_spectra is None:
-            pairs_to_slice = f_map.pairs
+        pairs_to_slice = f_map.pairs
     else:
         desired_pairs = create_simplified_desired_pairs(
             n_lens_bins=f_map.n_lens, 
@@ -425,7 +428,7 @@ def slice_matrix(
             if not isinstance(p, tuple) or len(p) != 2:
                 raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
             
-            # Apply your canonical ordering logic
+            # Canonical ordering (e.g., matching ('g', 'phi') instead of ('phi', 'g'))
             if p[0] > p[1]:
                 canonical_pair = (p[1], p[0])
             else:
@@ -435,37 +438,56 @@ def slice_matrix(
                 processed_desired_pairs.append(canonical_pair)
                 
         pairs_to_slice = processed_desired_pairs
-
-    # collect the global index ranges using f_map.get_indices
+        print("Pairs to slice: ", pairs_to_slice)
+        
+    # Collect the global index ranges using f_map.get_indices
     all_ranges = []
     final_sliced_pairs = []
-    
-    for pair in pairs_to_slice:
-        try:
-            # Let ForecastMap find the start and end indices for this block
-            start, end = f_map.get_indices(pair)
-            start = int(start / binsize)
-            end = int(end / binsize)
-            all_ranges.append(np.arange(start, end))
-            final_sliced_pairs.append(pair)
-        except ValueError as e:
-            # Skip any blocks that don't exist in the current global configuration
-            print(f"Warning: {e} Skipping this block from the slice.")
-            continue
+
+    #### CHECK
+    #### trying to keep the order correct
+    for pair in f_map.pairs:
+        if pair in pairs_to_slice:
+            try:
+                # Let ForecastMap find the start and end indices for this block
+                start, end = f_map.get_indices(pair)
+                start = int(start / binsize)
+                print("start: ", start)
+                end = int(end / binsize)
+                print("end: ", end)
+                all_ranges.append(np.arange(start, end))
+                final_sliced_pairs.append(pair)
+            except ValueError as e:
+                # Skip any blocks that don't exist in the current global configuration
+                print(f"Warning: {e} Skipping this block from the slice.")
+                continue
 
     if not all_ranges:
-        raise ValueError(f"None of the requested spectra in {desired_spectra} could be found in f_map.")
+        raise ValueError("No matching spectra blocks were found to slice!")
 
-    # 3. Flatten ranges and perform the actual slicing
-    subset_indices = np.concatenate(all_ranges)
+    # Concatenate all index segments into a single array
+    keep_indices = np.concatenate(all_ranges)
+    print("keep indices: ", keep_indices)
     
-    sliced_matrix = covariance_matrix[np.ix_(subset_indices, subset_indices)]
-    
-    return sliced_matrix
+    # Extract the underlying raw matrix from the input object if needed
+    # This handles both raw numpy arrays and object wrappers gracefully
+    full_matrix = cov_obj.matrix if hasattr(cov_obj, 'matrix') else cov_obj
 
+    # Double-axis slicing to extract sub-blocks
+    sliced_matrix_raw = full_matrix[keep_indices, :]
+    sliced_matrix_raw = sliced_matrix_raw[:, keep_indices]
+    
+    # --- FIX: Wrap the matrix in a class container to preserve properties ---
+    ### FIX CAUSE THIS IS NOW AN IMPROPER OBJECT -- THE MATRIX IS CUT BUT THE OTHER STUFF WILL BE WRONG
+    from copy import copy
+    sliced_cov_obj = copy(cov_obj)
+    sliced_cov_obj.matrix = sliced_matrix_raw
+    
+    return sliced_cov_obj
+    
 # plot the covariance matrix, or a subset thereof
 # if no specific desired spectra are given, the whole matrix will be plotted
-#### check this
+#### CHECK
 def plot_covariance_matrix(
     cov_obj,
     spectra_dict,
