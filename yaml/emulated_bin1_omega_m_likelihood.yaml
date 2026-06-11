@@ -6,7 +6,7 @@ likelihood:
 
     data_specs:
       f_sky: 0.4
-      n_ell: 3000
+      n_ell: 5000
       binsize: 50
       
       # data
@@ -38,26 +38,14 @@ params:
 
   'Omega_m':
     prior:
-         min: 0.25
-         max: 0.35
+         min: 0.265
+         max: 0.365
     ref: 0.315
     proposal: 0.005
     latex: "\\Omega_m"
 
-  #  A_s:
-  #    prior:
-  #      dist: norm
-  #      loc: 2.105e-9
-  #      scale: ???????
-  #    ref:
-  #      dist: norm
-  #      loc: 2.105e-9
-  #      scale: 0.01
-  #    proposal: ?????????
-  #    latex: "\\sigma_8"
-  
   A_s: 2.105e-9
-
+  
   # 'h':
   #   prior:
   #     dist: norm
@@ -128,8 +116,7 @@ params:
 sampler:
   mcmc:
     Rminus1_stop: 0.01
-    max_samples: 1500
-    #max_samples: 10000
+    max_samples: 1000
     proposal_scale: 1.5
     seed: 1234
 
@@ -137,4 +124,4 @@ sampler:
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_emulated_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_emulated_forecast_bin1_omega_m_A_s

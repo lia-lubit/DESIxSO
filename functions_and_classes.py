@@ -342,7 +342,7 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
 
     # Remove duplicates (though with the current logic, there shouldn't be any)
     # and ensure it's a list of tuples
-    return list(sorted(list(set(all_pairs)))) # Sort for deterministic order
+    return list(set(all_pairs))
     
 # build covariance matrix w or w/o emulator (full unless otherwise specified)
 # build full matrix, potentially pass a smaller one 
@@ -367,7 +367,8 @@ def build_covariance_from_data(
 
     # Use the full range of unbinned ells for CCL calculations
     ells = np.arange(2, n_ell + 2)
-
+    print('ells :', ells)
+    
     cosmo.compute_growth()
     
     # build spectra
@@ -396,7 +397,7 @@ def build_covariance_from_data(
 
 # slice vector and matrix given desired pairs
 ##### CHECK
-##### Modify to make the return sliced matrix a real CovarianceMatrix object?
+##### Modify to make the return sliced matrix a real CovarianceMatrix object??
 def slice_matrix(
     cov_obj, 
     spectra_dict, 
@@ -404,15 +405,6 @@ def slice_matrix(
     binsize=1, 
     desired_spectra=None
 ):
-
-    shorthand_map = {
-        'GG': ('g', 'g'),
-        'LL': ('l', 'l'),
-        'GL': ('g', 'l'),
-        'CC': ('phi', 'phi'),
-        'CG': ('g', 'phi'),
-        'CL': ('l', 'phi')
-    }
     
     if desired_spectra is None:
         pairs_to_slice = f_map.pairs
@@ -515,7 +507,9 @@ def plot_covariance_matrix(
                 canonical_pair = p
             if canonical_pair not in processed_desired_pairs:
                 processed_desired_pairs.append(canonical_pair)
-        pairs_to_plot = processed_desired_pairs
+        pairs_to_plot = [pair for pair in f_map.pairs if pair in processed_desired_pairs]
+        pairs_to_plot = list(set(pairs_to_plot))
+        print(pairs_to_plot)
 
     # Calculate the effective number of binned ell values for plotting
     n_ell_binned = int(np.ceil(f_map.n_ell / binsize))
@@ -531,6 +525,7 @@ def plot_covariance_matrix(
         for j in range(num_desired):
             pair_B = pairs_to_plot[j]
             # get the N_ell_binned x N_ell_binned block from the cov_obj
+#            block = cov_obj.get_block(pair_B, pair_A)
             block = cov_obj.get_block(pair_A, pair_B)
             # place it into the subset_matrix
             subset_matrix[i * n_ell_binned : (i + 1) * n_ell_binned,
@@ -899,6 +894,7 @@ def predict_boost_Pk(cosmology, emulator, z, cmin, eta_0):
 
 ## CLASSES
 # we need to figure out what spectra and spectra pairs must be calculated for any given data set and number of ells
+# the order of forecastmaps should be consistent across the board
 class ForecastMap:
     def __init__(self, n_lens=4, n_src=4, n_ell=20, desired_pairs=None):
         self.n_lens = n_lens
@@ -949,7 +945,7 @@ class ForecastMap:
 
     def _process_desired_pairs(self, desired_pairs_input):
         # Ensure consistent ordering and uniqueness for desired_pairs
-        processed_pairs = []
+        user_pairs = []
         for pair in desired_pairs_input:
             if not isinstance(pair, tuple) or len(pair) != 2:
                 raise ValueError(f"Each desired pair must be a tuple of two strings: {pair}")
@@ -961,10 +957,14 @@ class ForecastMap:
             else:
                 canonical_pair = pair
 
-            if canonical_pair not in processed_pairs:
-                processed_pairs.append(canonical_pair)
+            if canonical_pair not in user_pairs:
+                user_pairs.append(canonical_pair)
+        # make sure order is the same as it is when generate_all_pairs is used
+        user_pairs_set = list(set(user_pairs))
+        master_order = self._generate_all_pairs()
+        processed_pairs = [pair for pair in master_order if pair in user_pairs_set]
         return processed_pairs
-
+        
     # this lets you find the indices of the start and end of the section with the given covariance
     def get_indices(self, pair_label):
         # Canonicalize the input pair_label for lookup in self.pair_to_index

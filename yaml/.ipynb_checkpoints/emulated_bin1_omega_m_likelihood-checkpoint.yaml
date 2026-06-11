@@ -1,24 +1,24 @@
 #Cobaya!
 
 likelihood:
-  functions_and_classes.SO_x_DESI_Likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_w_emulator:
     python_path: "likelihoods"
 
     data_specs:
       f_sky: 0.4
       n_ell: 3000
       binsize: 50
-
+      
       # data
       lens_data_path: data/DESI_lens_data_bin1.npy
       source_data_path: data/HSC_dist_0_3_bin1.npy
 
-      shot_noise_lens_path: data/DESI_shot_noise_bin1.npy
+      shot_noise_path: data/DESI_shot_noise_bin1.npy
       cmb_noise_phi_path: data/SO_CMB_noise.npy
-      shape_noise_lens_path: data/DESI_shape_noise_bin1.npy
+      shape_noise_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/single_bin_data_vector.npy
-      covariance_path: cobaya_data/single_bin_covariance_matrix.npy
+      data_vector_path: cobaya_data/emulated_single_bin_data_vector.npy
+      covariance_path: cobaya_data/emulated_single_bin_covariance_matrix.npy
 
       magnification_bias_lenses: 0.8
       desired_spectra: [GG, LL, GL, CC, CL, CG]
@@ -27,7 +27,7 @@ likelihood:
         Omega_c: 0.27
         Omega_b: 0.045
         h: 0.674
-        sigma8: 0.8
+        A_s: 2.105e-9
         n_s: 0.96
         w0: -1.0
         wa: 0.0
@@ -36,31 +36,22 @@ likelihood:
 # parameters
 params:
 
-  Omega_m:
+  'Omega_m':
     prior:
-      dist: norm
-      loc: 0.316
-      scale: 0.025
-    ref: 0.316
-    proposal: 0.01
+         min: 0.265
+         max: 0.365
+    ref: 0.315
+    proposal: 0.005
     latex: "\\Omega_m"
 
-  # 'Omega_m': 0.316, # fixed
-
-  #  sigma8:
-  #    prior:
-  #      dist: norm
-  #      loc: 0.8
-  #      scale: 0.05
-  #    ref:
-  #      dist: norm
-  #      loc: 0.8
-  #      scale: 0.01
-  #    proposal: 0.01
-  #    latex: "\\sigma_8"
+  'A_s':
+    prior:
+      min: 1.605e-9
+      max: 2.605e-9
+    ref: 2.105e-9
+    proposal: 0.05e-9
+    latex: "A_s"
   
-  sigma8: 0.8
-
   # 'h':
   #   prior:
   #     dist: norm
@@ -131,13 +122,12 @@ params:
 sampler:
   mcmc:
     Rminus1_stop: 0.01
-    max_samples: 1000
-    #max_samples: 10000
+    max_samples: 20000
     proposal_scale: 1.5
-    seed: 12345
+    seed: 1234
 
 # theory
 theory: {}
 
 # result
-output: chains/cobaya_so_x_desi_forecast_bin1_omega_m
+output: chains/cobaya_so_x_desi_emulated_forecast_bin1_omega_m_A_s
