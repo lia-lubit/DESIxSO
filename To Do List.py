@@ -57,7 +57,6 @@ full blown mcmc + custom emulator? for most interesting ones
 
 Others
 would lensing ratios be sensitive to depth to reionization?
-2. run for omega_m and sigma_8 with slight variation in starting points (right now its running with them all starting at the same time)
 3. figure out what we expect given degeneracy
 4. figure out how exactly this is using the lensing ratios...
 5. figure out how to optimize
@@ -65,6 +64,8 @@ would lensing ratios be sensitive to depth to reionization?
 
 -- overlay constraints from DESI or CMB or other stuff to see how we match
 -- see if direction in which we intersect is useful
+
+
 
 Other
 visualize spectra for diff omega_m? not sure what this was about 

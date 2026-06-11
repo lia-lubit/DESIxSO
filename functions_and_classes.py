@@ -384,13 +384,9 @@ def build_covariance_from_data(
         return full_cov, full_spectra_dict, full_f_map
     else:
         print("Slicing...")
-        print("Desired spectra: ", desired_spectra)
-        print("")
         sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
-        print("Sliced pairs: ", sliced_pairs)
         sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
         # Loop over full_spectra_dict to preserve its original, chronological block order
-        ##### CHECK
         sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
         sliced_cov = slice_matrix(full_cov, full_spectra_dict, full_f_map, binsize=binsize, desired_spectra=desired_spectra)
         return sliced_cov, sliced_spectra_dict, sliced_f_map
@@ -460,7 +456,6 @@ def slice_matrix(
 
     # Concatenate all index segments into a single array
     keep_indices = np.concatenate(all_ranges)
-    print("keep indices: ", keep_indices)
     
     # Extract the underlying raw matrix from the input object if needed
     # This handles both raw numpy arrays and object wrappers gracefully
@@ -510,9 +505,7 @@ def plot_covariance_matrix(
                 if canonical_pair not in processed_desired_pairs:
                     processed_desired_pairs.append(canonical_pair)
         pairs_to_plot = [pair for pair in f_map.pairs if pair in processed_desired_pairs]
-        print(f_map.pairs)
         pairs_to_plot = list(dict.fromkeys(pairs_to_plot))
-        print(pairs_to_plot)
 
     # Calculate the effective number of binned ell values for plotting
     n_ell_binned = int(np.ceil(f_map.n_ell / binsize))
