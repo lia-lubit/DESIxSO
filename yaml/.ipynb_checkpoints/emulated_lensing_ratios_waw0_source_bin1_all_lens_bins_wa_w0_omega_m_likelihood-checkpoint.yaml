@@ -17,11 +17,11 @@ likelihood:
       cmb_noise_phi_path: data/SO_CMB_noise.npy
       shape_noise_path: data/DESI_shape_noise_bin1.npy
 
-      data_vector_path: cobaya_data/emulated_flat_LCDM_bin1_data_vector.npy
-      covariance_path: cobaya_data/emulated_flat_LCDM_bin1_covariance_matrix.npy
+      data_vector_path: cobaya_data/emulated_lensing_ratios_flat_LCDM_bin1_data_vector.npy
+      covariance_path: cobaya_data/emulated_lensing_ratios_flat_LCDM_bin1_covariance_matrix.npy
 
       magnification_bias_lenses: 0.8
-      desired_spectra: [GG, LL, GL, CC, CL, CG]
+      desired_spectra: [GL, CG]
 
       fiducial_cosmology_params:
         Omega_c: 0.27
@@ -57,7 +57,7 @@ params:
         max: 2.305e-9
     proposal: 0.05e-9
     latex: "A_s"
-
+  
   # 'h':
   #   prior:
   #     dist: norm
@@ -124,16 +124,16 @@ params:
 
   Omega_k: 0.0
 
-# sampler settings
+# sampler settingsF
 sampler:
   mcmc:
     Rminus1_stop: 0.01
     max_samples: 20000
     proposal_scale: 1.5
-    seed: 1237
+    seed: 1234
 
 # theory
 theory: {}
 
 # result
-output: chains/emulated_flat_LCDM_bin1_omega_m_A_s_likelihood
+output: chains/emulated_lensing_ratios_flat_LCDM_bin1_omega_m_A_s_likelihood

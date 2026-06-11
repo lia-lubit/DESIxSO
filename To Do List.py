@@ -14,7 +14,7 @@ MISC
 CHAIN 1: Compare constraints with photometric vs spectroscopic bins
 IMPORTANT: run this only with lensing ratios -- e.g. use only k_c - g and k_g - g spectra
 Run 1: 
-- one photometric bin
+- photometric bins
 - set fiducial cosmology to w0wa cosmology that best fits DESI data
 - let n_ell ~ 5000
 - fix everything to Planck values except w0, wa, and omega_m

@@ -76,7 +76,7 @@ sampler:
     Rminus1_stop: 0.01
     max_samples: 20000
     proposal_scale: 1.5
-    seed: 1234
+    seed: 1240
 
 # theory
 theory: {}
