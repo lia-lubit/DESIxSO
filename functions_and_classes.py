@@ -342,7 +342,7 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
 
     # Remove duplicates (though with the current logic, there shouldn't be any)
     # and ensure it's a list of tuples
-    return list(set(all_pairs))
+    return list(dict.fromkeys(all_pairs))
     
 # build covariance matrix w or w/o emulator (full unless otherwise specified)
 # build full matrix, potentially pass a smaller one 
@@ -352,12 +352,12 @@ def build_covariance_from_data(
     lens_data,
     source_data,
     f_sky,
-    n_ell=3000, # This now represents the *maximum* ell for the unbinned calculation
-    binsize=1,  # New parameter for binning
+    n_ell=3000, 
+    binsize=1,  
     shot_noise_lens=None,
     shape_noise_source=None,
     cmb_noise_phi=None,
-    magnification_bias_lenses=None, # Renamed parameter for lens magnification bias (s value)
+    magnification_bias_lenses=None, 
     desired_spectra=None,
     linear_emulator=None,
     boost_emulator=None
@@ -416,21 +416,22 @@ def slice_matrix(
         )
         
         processed_desired_pairs = []
-        for p in desired_pairs:
-            if not isinstance(p, tuple) or len(p) != 2:
-                raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
-            
-            # Canonical ordering (e.g., matching ('g', 'phi') instead of ('phi', 'g'))
-            if p[0] > p[1]:
-                canonical_pair = (p[1], p[0])
-            else:
-                canonical_pair = p
+        for p in f_map.pairs:
+            if p in desired_pairs:
+                if not isinstance(p, tuple) or len(p) != 2:
+                    raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
                 
-            if canonical_pair not in processed_desired_pairs:
-                processed_desired_pairs.append(canonical_pair)
-                
-        pairs_to_slice = processed_desired_pairs
-        print("Pairs to slice: ", pairs_to_slice)
+                # Canonical ordering (e.g., matching ('g', 'phi') instead of ('phi', 'g'))
+                if p[0] > p[1]:
+                    canonical_pair = (p[1], p[0])
+                else:
+                    canonical_pair = p
+                    
+                if canonical_pair not in processed_desired_pairs:
+                    processed_desired_pairs.append(canonical_pair)
+                    
+            pairs_to_slice = processed_desired_pairs
+            print("Pairs to slice: ", pairs_to_slice)
         
     # Collect the global index ranges using f_map.get_indices
     all_ranges = []
@@ -497,18 +498,20 @@ def plot_covariance_matrix(
         # This ensures consistent lookup in the covariance matrix
         desired_pairs = create_simplified_desired_pairs(n_lens_bins=f_map.n_lens, n_source_bins=f_map.n_src, desired_spectra=desired_spectra)
         processed_desired_pairs = []
-        for p in desired_pairs:
-            if not isinstance(p, tuple) or len(p) != 2:
-                raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
-            # Apply canonical ordering logic similar to ForecastMap._process_desired_pairs
-            if p[0] > p[1]:
-                canonical_pair = (p[1], p[0])
-            else:
-                canonical_pair = p
-            if canonical_pair not in processed_desired_pairs:
-                processed_desired_pairs.append(canonical_pair)
+        for p in f_map.pairs: 
+            if p in desired_pairs:
+                if not isinstance(p, tuple) or len(p) != 2:
+                    raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
+                # Apply canonical ordering logic similar to ForecastMap._process_desired_pairs
+                if p[0] > p[1]:
+                    canonical_pair = (p[1], p[0])
+                else:
+                    canonical_pair = p
+                if canonical_pair not in processed_desired_pairs:
+                    processed_desired_pairs.append(canonical_pair)
         pairs_to_plot = [pair for pair in f_map.pairs if pair in processed_desired_pairs]
-        pairs_to_plot = list(set(pairs_to_plot))
+        print(f_map.pairs)
+        pairs_to_plot = list(dict.fromkeys(pairs_to_plot))
         print(pairs_to_plot)
 
     # Calculate the effective number of binned ell values for plotting
@@ -960,7 +963,7 @@ class ForecastMap:
             if canonical_pair not in user_pairs:
                 user_pairs.append(canonical_pair)
         # make sure order is the same as it is when generate_all_pairs is used
-        user_pairs_set = list(set(user_pairs))
+        user_pairs_set = list(dict.fromkeys(user_pairs))
         master_order = self._generate_all_pairs()
         processed_pairs = [pair for pair in master_order if pair in user_pairs_set]
         return processed_pairs
