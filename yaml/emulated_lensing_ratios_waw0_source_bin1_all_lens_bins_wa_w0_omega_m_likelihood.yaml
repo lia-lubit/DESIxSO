@@ -44,7 +44,7 @@ params:
         dist: uniform
         min: 0.295
         max: 0.335
-    proposal: 0.01
+    proposal: 0.005
     latex: "\\Omega_m"
 
   'wa':
@@ -55,7 +55,7 @@ params:
         dist: uniform
         min: -1.06
         max: -0.66
-    proposal: 0.15
+    proposal: 0.1
     latex: "w_a"
 
   'w0':

@@ -367,7 +367,6 @@ def build_covariance_from_data(
 
     # Use the full range of unbinned ells for CCL calculations
     ells = np.arange(2, n_ell + 2)
-    print('ells :', ells)
     
     cosmo.compute_growth()
     
@@ -427,7 +426,6 @@ def slice_matrix(
                     processed_desired_pairs.append(canonical_pair)
                     
             pairs_to_slice = processed_desired_pairs
-            print("Pairs to slice: ", pairs_to_slice)
         
     # Collect the global index ranges using f_map.get_indices
     all_ranges = []
@@ -441,9 +439,7 @@ def slice_matrix(
                 # Let ForecastMap find the start and end indices for this block
                 start, end = f_map.get_indices(pair)
                 start = int(start / binsize)
-                print("start: ", start)
                 end = int(end / binsize)
-                print("end: ", end)
                 all_ranges.append(np.arange(start, end))
                 final_sliced_pairs.append(pair)
             except ValueError as e:
@@ -804,7 +800,6 @@ def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     # 2. Dense extended grid out to k ~ 1100 h/Mpc
     lk_ext = np.linspace(lk_arr_emu[-1] + 0.05, 7.0, 100)
     lk_arr = np.concatenate([lk_arr_emu, lk_ext])
-    #print("lk_arr grid: ", lk_arr)
     
     pk_arr = np.zeros((len(a_arr), len(lk_arr)))
 
@@ -2588,9 +2583,5 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
         
         # 6. Calculate Chi-squared: r^T * InvCov * r
         chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
-        
-        print(f"--- Debugging Chi2 Evaluation ---")
-        print(f"Omega_m evaluated: {Omega_m:.4f} (Omega_c: {Omega_c:.4f})")
-        print(f"Total Chi2: {chi2:.4f}")
         
         return chi2
