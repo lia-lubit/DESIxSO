@@ -1,0 +1,7 @@
+omega_m	\Omega_m
+w0	w_0
+wa	w_a
+minuslogprior	minuslogprior
+minuslogprior__0	minuslogprior__0
+chi2	\chi^2
+chi2__SO_x_DESI_Likelihood_w_emulator	\chi^2_{\mathrm{model}}
