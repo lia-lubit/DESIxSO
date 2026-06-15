@@ -47,8 +47,221 @@ print("LOADING FILE:", os.path.abspath(__file__))
 
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
-## FUNCTIONS
+### FUNCTIONS
 
+## Plotting etc.
+
+def _find_key_recursive(data, target_key):
+    """Recursively searches for a key in a nested dictionary/list structure."""
+    if isinstance(data, dict):
+        if target_key in data:
+            return data[target_key]
+        for key, value in data.items():
+            result = _find_key_recursive(value, target_key)
+            if result is not None:
+                return result
+    elif isinstance(data, list):
+        for item in data:
+            result = _find_key_recursive(item, target_key)
+            if result is not None:
+                return result
+    return None
+
+# plot traces and contour plots from Cobaya, including reference points
+# mark if the run was incomplete, but assume it was complete unless otherwise stated
+def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4, burn_in_fraction=0.2, output_dir='plots', complete=True):
+    """
+    Automates loading Cobaya MCMC chains, parsing a custom likelihood YAML file for 
+    fiducial values, extracting starting positions, and creating triangle & trace plots.
+    Strips 'likelihood' from filenames and titles.
+    
+    Parameters:
+    -----------
+    complete : bool, optional
+        If True (default), plots are treated as final. If False, adds '(incomplete)' 
+        to the text titles and '_(incomplete)' to the saved filenames.
+    """
+    
+    # 1. Parse Fiducial Cosmology dynamically from the YAML structure
+    print(f"Reading fiducial values from: {yaml_path}")
+    with open(yaml_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    fiducial_block = _find_key_recursive(config, 'fiducial_cosmology_params')
+    if fiducial_block is None:
+        raise KeyError("Could not find 'fiducial_cosmology_params' anywhere inside the provided YAML file.")
+
+    fiducial_vals = {}
+    for p in sampled_params:
+        if p in fiducial_block:
+            fiducial_vals[p] = float(fiducial_block[p])
+        elif p == 'Omega_m' and 'Omega_c' in fiducial_block and 'Omega_b' in fiducial_block:
+            fiducial_vals['Omega_m'] = float(fiducial_block['Omega_c']) + float(fiducial_block['Omega_b'])
+            print(f"Derived fiducial Omega_m = Omega_c + Omega_b = {fiducial_vals['Omega_m']:.4f}")
+        else:
+            print(f"Warning: Could not resolve fiducial value for '{p}'. Setting default to 0.0.")
+            fiducial_vals[p] = 0.0
+
+    # 2. Process Chains, Extract Initial Points, and Apply Burn-In
+    all_weights = []
+    all_loglikes = []
+    param_tracks = {p: [] for p in sampled_params}
+    initial_points = []
+    raw_chain_data = []
+
+    print(f"Processing {num_chains} chains from: {chain_dir}")
+    for i in range(num_chains):
+        chain_path = os.path.join(chain_dir, f'chain_task_{i}.txt')
+        if os.path.exists(chain_path):
+            data = np.loadtxt(chain_path)
+            raw_chain_data.append(data)
+            
+            pt_start = {}
+            for idx, param in enumerate(sampled_params):
+                col_idx = idx + 2  
+                pt_start[param] = data[0, col_idx]
+            initial_points.append(pt_start)
+            
+            burn = int(burn_in_fraction * len(data))
+            all_weights.append(data[burn:, 0])
+            all_loglikes.append(data[burn:, 1])
+            
+            for idx, param in enumerate(sampled_params):
+                col_idx = idx + 2
+                param_tracks[param].append(data[burn:, col_idx])
+        else:
+            print(f"Warning: {chain_path} not found. Skipping.")
+
+    combined_samples = np.column_stack([np.concatenate(param_tracks[p]) for p in sampled_params])
+    
+    latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0'}
+    labels = [latex_labels.get(p, p) for p in sampled_params]
+
+    samples = MCSamples(
+        samples=combined_samples,
+        weights=np.concatenate(all_weights),
+        loglikes=np.concatenate(all_loglikes),
+        names=sampled_params,
+        labels=labels,
+        settings={'ignore_rows': 0.0}
+    )
+
+    peaks = {}
+    for param in sampled_params:
+        density1D = samples.get1DDensity(param)
+        peaks[param] = density1D.x[np.argmax(density1D.P)]
+
+    # --- NAME STRIPPING & COMPLETION MODIFICATIONS ---
+    os.makedirs(output_dir, exist_ok=True)
+    raw_run_name = os.path.basename(os.path.normpath(chain_dir))
+    
+    # Clean the filename by stripping out '_likelihood' or 'likelihood'
+    clean_run_name = raw_run_name.replace('_likelihood', '').replace('likelihood', '')
+    display_title = clean_run_name.replace('_', ' ')
+
+    # Append tags dynamically based on the 'complete' flag state
+    if not complete:
+        file_suffix = "_(incomplete)"
+        title_suffix = " (incomplete)"
+    else:
+        file_suffix = ""
+        title_suffix = ""
+
+    # --- 3. TRIANGLE CONTOUR PLOT ---
+    g1 = plots.get_subplot_plotter(width_inch=2.5 * len(sampled_params))
+    g1.triangle_plot(
+        [samples], 
+        params=sampled_params, 
+        filled=True, 
+        contour_colors=['darkblue'],
+        title_limit=1,
+        markers=fiducial_vals
+    )
+
+    for row in range(len(sampled_params)):
+        for col in range(row + 1):
+            ax = g1.subplots[row, col]
+            if ax is None:
+                continue
+            p_row = sampled_params[row]
+            p_col = sampled_params[col]
+            if row == col:
+                ax.axvline(x=peaks[p_row], color='crimson', linestyle=':', alpha=0.8, label='MCMC Peak')
+                for idx, pt in enumerate(initial_points):
+                    lbl = 'Initial Points' if (row == 0 and idx == 0) else ""
+                    ax.axvline(x=pt[p_row], color='darkorange', linestyle='-', alpha=0.4, linewidth=1, label=lbl)
+                if row == 0:  
+                    ax.legend(loc='upper right', fontsize=8)
+            else:
+                for idx, pt in enumerate(initial_points):
+                    lbl = 'Initial Points' if (row == len(sampled_params)-1 and col == len(sampled_params)-2 and idx == 0) else ""
+                    ax.scatter(pt[p_col], pt[p_row], color='darkorange', marker='x', s=40, zorder=5, alpha=0.8, label=lbl)
+                if row == len(sampled_params)-1 and col == len(sampled_params)-2:
+                    ax.legend(loc='upper right', fontsize=8)
+
+    plt.suptitle(f"Marginalized Constraints: {display_title}{title_suffix}", y=1.02, fontsize=10)
+    triangle_save_path = os.path.join(output_dir, f"{clean_run_name}_triangle_plot{file_suffix}.pdf")
+    g1.export(triangle_save_path)
+    print(f"Saved triangle plot to: {triangle_save_path}")
+    plt.show()
+
+    # --- 4. TRACE PLOTS ---
+    fig, axes = plt.subplots(len(sampled_params), 1, figsize=(12, 3 * len(sampled_params)), sharex=True)
+    if len(sampled_params) == 1:
+        axes = [axes]
+
+    for idx, param in enumerate(sampled_params):
+        col_idx = idx + 2
+        ax = axes[idx]
+        
+        for i, chain_data in enumerate(raw_chain_data):
+            ax.plot(chain_data[:, col_idx], alpha=0.6, linewidth=0.8, label=f'Chain {i}' if idx == 0 else "")
+        
+        ax.axhline(y=peaks[param], color='crimson', linestyle=':', alpha=0.8, label=f'Peak: {peaks[param]:.4f}')
+        ax.axhline(y=fiducial_vals[param], color='black', linestyle='--', alpha=0.6, label=f'Fiducial: {fiducial_vals[param]:.4f}')
+        
+        param_label = latex_labels.get(param, param)
+        ax.set_ylabel(f"${param_label}$")
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+        
+    axes[0].set_title(f"MCMC Trace Plots: {display_title}{title_suffix}", fontsize=12)
+    axes[-1].set_xlabel('Step Number (Including Burn-in)')
+    
+    plt.tight_layout()
+    trace_save_path = os.path.join(output_dir, f"{clean_run_name}_traces{file_suffix}.png")
+    plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved trace plot to: {trace_save_path}")
+    plt.show()
+    # --- 4. TRACE PLOTS ---
+    fig, axes = plt.subplots(len(sampled_params), 1, figsize=(12, 3 * len(sampled_params)), sharex=True)
+    if len(sampled_params) == 1:
+        axes = [axes]
+
+    for idx, param in enumerate(sampled_params):
+        col_idx = idx + 2
+        ax = axes[idx]
+        
+        for i, chain_data in enumerate(raw_chain_data):
+            ax.plot(chain_data[:, col_idx], alpha=0.6, linewidth=0.8, label=f'Chain {i}' if idx == 0 else "")
+        
+        ax.axhline(y=peaks[param], color='crimson', linestyle=':', alpha=0.8, label=f'Peak: {peaks[param]:.4f}')
+        ax.axhline(y=fiducial_vals[param], color='black', linestyle='--', alpha=0.6, label=f'Fiducial: {fiducial_vals[param]:.4f}')
+        
+        param_label = latex_labels.get(param, param)
+        ax.set_ylabel(f"${param_label}$")
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+        
+    axes[0].set_title(f"MCMC Trace Plots: {display_title}", fontsize=12)
+    axes[-1].set_xlabel('Step Number (Including Burn-in)')
+    
+    plt.tight_layout()
+    trace_save_path = os.path.join(output_dir, f"{clean_run_name}_traces.png")
+    plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved trace plot to: {trace_save_path}")
+    plt.show()
+    
 # calcualte and (maybe) plot angular power spectra
 def calculate_and_plot_Cls(
     cosmology,        # ccl.Cosmology object
@@ -154,7 +367,9 @@ def calculate_and_plot_Cls(
 
     else:
         print(f"Warning: Invalid plot option '{plot}'. Expected 'yes' or 'no'. Proceeding without plotting.")
-   
+
+## Covariance etc
+    
 # compute general spectra with noise
 def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None):
     # build CCL tracers from distributions
@@ -752,39 +967,6 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
         plt.grid(True, which="both", ls="-")
         plt.tight_layout()
         plt.show()
-
-# get A_s from sigma8
-def get_linear_As(cosmology):
-    
-    A_s_val = cosmology['A_s']
-    if not np.isnan(A_s_val):
-        return A_s_val
-        
-    # if A_s is missing, extract the target sigma8
-    target_sigma8 = cosmology['sigma8']
-    
-    # instantiate a clean, minimal baseline model using a fiducial A_s
-    # this captures the exact transfer function shape for these specific parameters
-    fiducial_As = 2.0e-9
-    
-    base_params = ccl.Cosmology(
-        Omega_c=cosmology['Omega_c'],
-        Omega_b=cosmology['Omega_b'],
-        h=cosmology['h'],
-        n_s=cosmology['n_s'],
-        A_s=fiducial_As,
-        transfer_function='boltzmann_camb',
-        matter_power_spectrum='linear'
-    )
-    
-    # calculate the variance resulting from the baseline amplitude
-    fiducial_sigma8 = ccl.sigma8(base_params)
-
-    #### CONFIRM THIS DERIVATION
-    # A_s is proportional to sigma8 ^ 2
-    # exact analytical rescaling: As = As_fid * (sigma8_target / sigma8_fid)^2
-    As = fiducial_As * (target_sigma8 / fiducial_sigma8) ** 2
-    return As
 
 def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     if z_arr is None:
@@ -1707,10 +1889,6 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         
         # 6. Calculate Chi-squared: r^T * InvCov * r
         chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
-        
-        print(f"--- Debugging Chi2 Evaluation ---")
-        print(f"Omega_m evaluated: {Omega_m:.4f} (Omega_c: {Omega_c:.4f})")
-        print(f"Total Chi2: {chi2:.4f}")
         
         return chi2
         

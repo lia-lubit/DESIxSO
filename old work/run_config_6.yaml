@@ -1,0 +1,146 @@
+#Cobaya!
+
+# priors on wa, w0 are based on the graphs used by DESI -- extended to cover more ground
+# all other priors (but Omega_m) are Planck priors: https://arxiv.org/pdf/1303.5076
+# I used slightly different priors on Omega_m, since they use omega_b and omega_cdm
+# if I translated their values, my priors on Omega_m would extend past 1, which is unphysical
+# I gave reference ranges for the starting points since I was worried it might run on forever
+# I gave ranges around the fiducial value, with size about 5 times the DESI/Planck widths of error bars, and I'll run 8 chains
+
+likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood_w_emulator:
+    python_path: "likelihoods"
+
+    data_specs:
+      f_sky: 0.4
+      n_ell: 5000
+      binsize: 50
+      
+      # data
+      lens_data_path: data/DESI_lens_data.npy
+      source_data_path: data/HSC_dist_0_3.npy
+
+      shot_noise_path: data/DESI_shot_noise.npy
+      cmb_noise_phi_path: data/SO_CMB_noise.npy
+      shape_noise_path: data/DESI_shape_noise.npy
+
+      data_vector_path: cobaya_data/emulated_lensing_ratios_waw0_all_photometric_bins_data_vector.npy
+      covariance_path: cobaya_data/emulated_lensing_ratios_waw0_all_photometric_bins_covariance_matrix.npy
+
+      magnification_bias_lenses: 0.8
+      desired_spectra: [GL, CG]
+
+      fiducial_cosmology_params:
+        Omega_c: 0.265
+        Omega_b: 0.0508
+        h: 0.6674
+        A_s: 2.1006e-9
+        n_s: 0.966
+        w0: -0.752
+        wa: -0.86
+        Omega_k: 0.0
+
+# parameters
+params:
+
+  'Omega_m':
+    prior:
+         min: 0.1
+         max: 0.7
+    ref:
+        dist: uniform
+        min: 0.3037
+        max: 0.3278
+    proposal: 0.005
+    latex: "\\Omega_m"
+
+  'wa':
+    prior:
+         min: -3.5
+         max: 0.5
+    ref:
+        dist: uniform
+        min: -1.86
+        max: 0.26
+    proposal: 0.1
+    latex: "w_a"
+
+  'w0':
+    prior:
+         min: -1.5
+         max: 0.5
+    ref:
+        dist: uniform
+        min: -1.037
+        max: -0.467
+    proposal: 0.05
+    latex: "w_0"
+
+  'A_s':
+    prior:
+         min: 1.48797e-9
+         max: 5.45981e-9
+    ref:
+        dist: uniform
+        min: 1.881e-9
+        max: 2.3202e-9
+    proposal: 2e-11
+    latex: "A_s"
+
+  'h':
+    prior:
+         min: 0.2
+         max: 1
+    ref:
+        dist: uniform
+        min: 0.6404
+        max: 0.6944
+    proposal: 0.01
+    latex: "h"
+    
+  'Omega_b': 
+    prior:
+         min: 0.011
+         max: 0.221
+    ref:
+        dist: uniform
+        min: 0.04915
+        max: 0.05245
+    proposal: 0.001
+    latex: "\\Omega_b"
+
+  'n_s':
+    prior:
+         min: 0.9
+         max: 1.1
+    ref:
+        dist: uniform
+        min: 0.946
+        max: 0.986
+    proposal: 0.005
+    latex: "n_s"
+
+  'Omega_k':
+    prior:
+         min: -0.3
+         max: 0.3
+    ref:
+        dist: uniform
+        min: -0.01
+        max: 0.01
+    proposal: 0.005
+    latex: "\\Omega_k"
+
+# sampler settings
+sampler:
+  mcmc:
+    Rminus1_stop: 0.01
+    max_samples: 1000000
+    proposal_scale: 1.1
+    seed: 1240
+
+# theory
+theory: {}
+
+# result
+output: chains/emulated_lensing_ratios_flat_LCDM_all_photometric_bins_full_likelihood
