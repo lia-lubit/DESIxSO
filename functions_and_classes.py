@@ -38,10 +38,11 @@ from mpl_toolkits.mplot3d import Axes3D
 import cobaya
 from cobaya.run import run as cobaya_run
 from cobaya.likelihood import Likelihood
-#from cobaya_utilities import tools -- this wont import, but I don't use it at the momment anyway
+from cobaya_utilities import fisher
 import getdist
 from getdist import plots, MCSamples
 from getdist.mcsamples import loadMCSamples
+from getdist.gaussian_mixtures import GaussianND
 
 print("LOADING FILE:", os.path.abspath(__file__))
 
@@ -340,7 +341,291 @@ def calculate_and_plot_Cls(
     else:
         print(f"Warning: Invalid plot option '{plot}'. Expected 'yes' or 'no'. Proceeding without plotting.")
 
-## Covariance etc
+# plot the covariance matrix, or a subset thereof
+# if no specific desired spectra are given, the whole matrix will be plotted
+#### CHECK
+def plot_covariance_matrix(
+    cov_obj,
+    spectra_dict,
+    f_map,
+    binsize=1, # New parameter for binning
+    desired_spectra = None,
+    title='Subset of Gaussian Covariance Matrix'
+):
+
+    # determine which spectra to plot
+    if desired_spectra is None:
+        pairs_to_plot = f_map.pairs
+    else:
+        # Canonicalize the desired_spectra based on f_map's internal ordering
+        # This ensures consistent lookup in the covariance matrix
+        desired_pairs = create_simplified_desired_pairs(n_lens_bins=f_map.n_lens, n_source_bins=f_map.n_src, desired_spectra=desired_spectra)
+        processed_desired_pairs = []
+        for p in f_map.pairs: 
+            if p in desired_pairs:
+                if not isinstance(p, tuple) or len(p) != 2:
+                    raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
+                # Apply canonical ordering logic similar to ForecastMap._process_desired_pairs
+                if p[0] > p[1]:
+                    canonical_pair = (p[1], p[0])
+                else:
+                    canonical_pair = p
+                if canonical_pair not in processed_desired_pairs:
+                    processed_desired_pairs.append(canonical_pair)
+        pairs_to_plot = [pair for pair in f_map.pairs if pair in processed_desired_pairs]
+        pairs_to_plot = list(dict.fromkeys(pairs_to_plot))
+
+    # Calculate the effective number of binned ell values for plotting
+    n_ell_binned = int(np.ceil(f_map.n_ell / binsize))
+
+    # determine dimensions for the subset matrix
+    num_desired = len(pairs_to_plot)
+    total_dim = num_desired * n_ell_binned
+    subset_matrix = np.zeros((total_dim, total_dim))
+
+    # populate the subset matrix
+    for i in range(num_desired):
+        pair_A = pairs_to_plot[i]
+        for j in range(num_desired):
+            pair_B = pairs_to_plot[j]
+            # get the N_ell_binned x N_ell_binned block from the cov_obj
+#            block = cov_obj.get_block(pair_B, pair_A)
+            block = cov_obj.get_block(pair_A, pair_B)
+            # place it into the subset_matrix
+            subset_matrix[i * n_ell_binned : (i + 1) * n_ell_binned,
+                          j * n_ell_binned : (j + 1) * n_ell_binned] = block
+
+    # plotting
+    plt.figure(figsize=(12, 10))
+    im = plt.imshow(subset_matrix, cmap='viridis', origin='lower',
+                    extent=[0, total_dim, 0, total_dim], # extent for proper aspect ratio/labels
+                    norm=LogNorm() # use LogNorm for better visualization of potentially wide range of values
+                    )
+
+    # create tick positions and labels for blocks
+    tick_positions = []
+    tick_labels = []
+
+    for k in range(num_desired):
+        tick_positions.append(k * n_ell_binned + n_ell_binned / 2)
+        label_a, label_b = pairs_to_plot[k]
+
+        # format labels nicely, handling CMB specific ones and numerical ones
+        if label_a in ['T', 'E'] and label_b in ['T', 'E']:
+            tick_labels.append(fr'$C^{{{label_a}{label_b}}}$')
+
+        elif label_a == 'phi' and label_b == 'phi':
+            tick_labels.append(fr'$C^{{\phi\phi}}$')
+
+        elif label_a.startswith('g') and label_b.startswith('g'):
+            sa = label_a.replace('g', 'g_')
+            sb = label_b.replace('g', 'g_')
+            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
+
+        elif label_a.startswith('l') and label_b.startswith('l'):
+            sa = label_a.replace('l', 'l_')
+            sb = label_b.replace('l', 'l_')
+            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
+
+        elif (label_a.startswith('g') or label_a.a.startswith('l')) and label_b == 'phi':
+            sa = label_a.replace('g', 'g_').replace('l', 'l_')
+            tick_labels.append(fr'$C^{{{sa}\phi}}$')
+
+        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'phi':
+            sb = label_b.replace('g', 'g_').replace('l', 'l_')
+            tick_labels.append(fr'$C^{{\phi{sb}}}$')
+
+        else:  # lens-lensing, or general case
+            sa = label_a.replace('g', 'g_').replace('l', 'l_')
+            sb = label_b.replace('g', 'g_').replace('l', 'l_')
+            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
+
+    plt.xticks(tick_positions, tick_labels, rotation=45, ha='right', fontsize=10)
+    plt.yticks(tick_positions, tick_labels, fontsize=10)
+    plt.xlabel('Covariance component')
+    plt.ylabel('Covariance component')
+    plt.title(title)
+    plt.colorbar(im, label='Covariance Value (Log Scale)')
+    plt.grid(False) # imshow usually doesn't need grid lines over the image itself
+
+    # add lines to delineate the blocks
+    for k in range(1, num_desired):
+        plt.axvline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
+        plt.axhline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
+
+    plt.tight_layout()
+    plt.show()
+
+    return subset_matrix
+
+def plot_correlation_matrix(
+    cov_obj,
+    spectra_dict,
+    f_map,
+    binsize=1, # New parameter for binning
+    desired_spectra = None,
+    title='Subset of Gaussian Correlation Matrix'
+):
+
+    # determine which spectra to plot
+    if desired_spectra is None:
+        pairs_to_plot = f_map.pairs
+    else:
+        # Canonicalize the desired_spectra based on f_map's internal ordering
+        # This ensures consistent lookup in the covariance matrix
+        desired_pairs = create_simplified_desired_pairs(n_lens_bins=f_map.n_lens, n_source_bins=f_map.n_src, desired_spectra=desired_spectra)
+        processed_desired_pairs = []
+        for p in desired_pairs:
+            if not isinstance(p, tuple) or len(p) != 2:
+                raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
+            # Apply canonical ordering logic similar to ForecastMap._process_desired_pairs
+            if p[0] > p[1]:
+                canonical_pair = (p[1], p[0])
+            else:
+                canonical_pair = p
+            if canonical_pair not in processed_desired_pairs:
+                processed_desired_pairs.append(canonical_pair)
+        pairs_to_plot = processed_desired_pairs
+
+    # Calculate the effective number of binned ell values for plotting
+    n_ell_binned = int(np.ceil(f_map.n_ell / binsize))
+
+    # determine dimensions for the subset matrix
+    num_desired = len(pairs_to_plot)
+    total_dim = num_desired * n_ell_binned
+    subset_covariance_matrix = np.zeros((total_dim, total_dim))
+
+    # populate the subset covariance matrix
+    for i in range(num_desired):
+        pair_A = pairs_to_plot[i]
+        for j in range(num_desired):
+            pair_B = pairs_to_plot[j]
+            # get the N_ell_binned x N_ell_binned block from the cov_obj
+            block = cov_obj.get_block(pair_A, pair_B)
+            # place it into the subset_covariance_matrix
+            subset_covariance_matrix[i * n_ell_binned : (i + 1) * n_ell_binned,
+                                   j * n_ell_binned : (j + 1) * n_ell_binned] = block
+
+    # Calculate the correlation matrix
+    # Ensure that diagonal elements are non-zero before division
+    diagonal = np.sqrt(np.diag(subset_covariance_matrix))
+    # Replace zeros in diagonal with a small number to avoid division by zero
+    diagonal[diagonal == 0] = 1e-10  # A small epsilon
+    correlation_matrix = subset_covariance_matrix / np.outer(diagonal, diagonal)
+
+    # Create a mask for values exactly equal to zero
+    # mask = (correlation_matrix == 0)
+    mask = None
+
+    # plotting with Seaborn
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(correlation_matrix, cmap='viridis', vmin=-1, vmax=1, square=True,
+                cbar_kws={'label': 'Correlation Value'}, mask=mask)
+
+    # create tick positions and labels for blocks
+    tick_positions = []
+    tick_labels = []
+
+    for k in range(num_desired):
+        tick_positions.append(k * n_ell_binned + n_ell_binned / 2)
+        label_a, label_b = pairs_to_plot[k]
+        # format labels nicely, handling CMB specific ones and numerical ones
+        if label_a == 'phi' and label_b == 'phi':
+            tick_labels.append(r'$C^{\phi\phi}$')
+
+        elif label_a.startswith('g') and label_b.startswith('g'):
+            sa = label_a.replace('g', 'g_')
+            sb = label_b.replace('g', 'g_')
+            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
+
+        elif label_a.startswith('l') and label_b.startswith('l'):
+            sa = label_a.replace('l', 'l_')
+            sb = label_b.replace('l', 'l_')
+            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
+
+        elif (label_a.startswith('g') or label_a.startswith('l')) and label_b == 'phi':
+            sa = label_a.replace('g', 'g_').replace('l', 'l_')
+            tick_labels.append(fr'$C^{{{sa}\phi}}$')
+
+        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'phi':
+            sb = label_b.replace('g', 'g_').replace('l', 'l_')
+            tick_labels.append(fr'$C^{{\phi{sb}}}$')
+
+        else:  # lens-lensing, or general case
+            sa = label_a.replace('g', 'g_').replace('l', 'l_')
+            sb = label_b.replace('g', 'g_').replace('l', 'l_')
+            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
+
+    plt.xticks(tick_positions, tick_labels, rotation=45, ha='right', fontsize=10)
+    plt.yticks(tick_positions, tick_labels, fontsize=10)
+    plt.xlabel('Correlation Component')
+    plt.ylabel('Correlation Component')
+    plt.title(title)
+
+    # Add lines to delineate the blocks (on top of the heatmap)
+    for k in range(1, num_desired):
+        plt.axvline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
+        plt.axhline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
+
+    plt.tight_layout()
+    plt.show()
+
+    return correlation_matrix
+
+# helper function to plot spectra from the spectra_dict
+def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None):
+    if not spectra_dict:
+        print("No spectra to plot.")
+        return
+
+    # Get the ells from the first entry in spectra_dict
+    # Assuming all spectra have the same ell values
+    first_key = next(iter(spectra_dict))
+    ells = np.arange(2, len(spectra_dict[first_key]) + 2)
+
+    # Determine which spectra to plot
+    spectra_to_plot_filtered = {}
+    if desired_spectra is None:
+        spectra_to_plot_filtered = spectra_dict # Plot all if none specified
+    else:
+        for d_pair in desired_spectra:
+            # Canonicalize the desired pair to match spectra_dict keys
+            p1, p2 = d_pair
+            # Ensure consistent key ordering (e.g., ('g1', 'l1') instead of ('l1', 'g1'))
+            # This should match how build_spectra_dict stores Cls (lexicographical order)
+            if p1 < p2:
+                canonical_pair = (p1, p2)
+            else:
+                canonical_pair = (p2, p1)
+
+            if canonical_pair in spectra_dict:
+                spectra_to_plot_filtered[canonical_pair] = spectra_dict[canonical_pair]
+            else:
+                print(f"Warning: Desired spectrum {d_pair} (canonical: {canonical_pair}) not found in spectra_dict. Skipping.")
+
+    if not spectra_to_plot_filtered:
+        print("No spectra found to plot after filtering.")
+        return
+
+    # generate a colormap with enough colors for the filtered spectra
+    colors = cm.get_cmap('tab10', len(spectra_to_plot_filtered))
+    color_idx = 0
+
+    for key, cl_values in spectra_to_plot_filtered.items():
+        plt.figure(figsize=(10, 6)) # New figure for each spectrum
+        # Use a consistent ell range for plotting
+        plt.loglog(ells, cl_values, label=f'C_l^{{{key[0]},{key[1]}}}', color=colors(color_idx % colors.N))
+        color_idx += 1
+
+        plt.xlabel(r'Multipole, $\ell$')
+        plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
+        plt.title(f'{title_prefix} for $C_l^{{{key[0]},{key[1]}}}$')
+        plt.legend(loc='best', fontsize='small')
+        plt.grid(True, which="both", ls="-")
+        plt.tight_layout()
+        plt.show()
+        
+## Covariances etc
     
 # compute general spectra with noise
 def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None):
@@ -655,291 +940,145 @@ def slice_matrix(
     sliced_cov_obj.matrix = sliced_matrix_raw
     
     return sliced_cov_obj
+
+# fisher forecast
+def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_noise_source, shot_noise_lens, CMB_noise_phi, cov_path, params_to_sample, 
+                             n_ell=5000, binsize=50, magnification_bias_lenses = 0.8, desired_spectra = None, linear_emulator = None, 
+                             boost_emulator = None, steps_dict=None, plot = False):
     
-# plot the covariance matrix, or a subset thereof
-# if no specific desired spectra are given, the whole matrix will be plotted
-#### CHECK
-def plot_covariance_matrix(
-    cov_obj,
-    spectra_dict,
-    f_map,
-    binsize=1, # New parameter for binning
-    desired_spectra = None,
-    title='Subset of Gaussian Covariance Matrix'
-):
+    # extract covariance matrix from cov_path
+    cov_matrix = np.load(cov_path)
+    inv_cov = np.linalg.inv(cov_matrix)
+    cov_dim = cov_matrix.shape[0]
+    
+    # get fiducial parameters from cosmology
+    fiducial_params = {
+        'Omega_c': fiducial_cosmology['Omega_c'],
+        'Omega_b': fiducial_cosmology['Omega_b'],
+        'h': fiducial_cosmology['h'],
+        'n_s': fiducial_cosmology['n_s'],
+        'w0': fiducial_cosmology['w0'],
+        'wa': fiducial_cosmology['wa'],
+        'Omega_k': fiducial_cosmology['Omega_k'],
+        'A_s': fiducial_cosmology['A_s']
+    }
+    fiducial_om = fiducial_params['Omega_c'] + fiducial_params['Omega_b']
+    
+    if steps_dict is None:
+        steps_dict = {
+            'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 
+            'w0': 1e-3, 'wa': 1e-3, 'n_s': 1e-3, 'Omega_b': 1e-4
+        }
 
-    # determine which spectra to plot
-    if desired_spectra is None:
-        pairs_to_plot = f_map.pairs
-    else:
-        # Canonicalize the desired_spectra based on f_map's internal ordering
-        # This ensures consistent lookup in the covariance matrix
-        desired_pairs = create_simplified_desired_pairs(n_lens_bins=f_map.n_lens, n_source_bins=f_map.n_src, desired_spectra=desired_spectra)
-        processed_desired_pairs = []
-        for p in f_map.pairs: 
-            if p in desired_pairs:
-                if not isinstance(p, tuple) or len(p) != 2:
-                    raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
-                # Apply canonical ordering logic similar to ForecastMap._process_desired_pairs
-                if p[0] > p[1]:
-                    canonical_pair = (p[1], p[0])
+    # build data vector for desired_spectra using your custom dataset arguments
+    def get_theory_vector(current_params):
+        p = {**fiducial_params, **current_params}
+        
+        if 'Omega_m' in current_params:
+            Omega_c_val = current_params['Omega_m'] - p['Omega_b']
+        else:
+            Omega_c_val = p['Omega_c']
+            
+        cosmo = ccl.Cosmology(
+            Omega_c=Omega_c_val, Omega_b=p['Omega_b'], h=p['h'],
+            A_s=p['A_s'], n_s=p['n_s'], w0=p['w0'], wa=p['wa'], 
+            Omega_k=p['Omega_k'], transfer_function='boltzmann_camb'
+        )
+        cosmo.compute_growth()
+                
+        ells = np.arange(2, n_ell + 2)
+
+        full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell)
+   
+        # build spectra
+        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, CMB_noise_phi)
+        full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
+
+        if desired_spectra != None: 
+            sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
+            sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
+            sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
+            final_f_map = sliced_f_map
+            final_spectra_dict = sliced_spectra_dict
+        else:
+            final_f_map = full_f_map
+            final_spectra_dict = full_spectra_dict
+            
+        # extract and flatten the model data vector
+        model_data_vector = np.array([])
+        num_binned_ells = int(np.ceil(n_ell / binsize))
+        
+        for pair in final_f_map.pairs:
+            unbinned_cls = final_spectra_dict[pair]
+            binned_cls_for_pair = []
+            for i in range(0, n_ell, binsize):
+                end_idx = min(i + binsize, len(unbinned_cls))
+                if i < end_idx:
+                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
                 else:
-                    canonical_pair = p
-                if canonical_pair not in processed_desired_pairs:
-                    processed_desired_pairs.append(canonical_pair)
-        pairs_to_plot = [pair for pair in f_map.pairs if pair in processed_desired_pairs]
-        pairs_to_plot = list(dict.fromkeys(pairs_to_plot))
+                    binned_cls_for_pair.append(0.0)
+            while len(binned_cls_for_pair) < num_binned_ells:
+                binned_cls_for_pair.append(0.0)
+            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
 
-    # Calculate the effective number of binned ell values for plotting
-    n_ell_binned = int(np.ceil(f_map.n_ell / binsize))
+        return np.array(model_data_vector)
 
-    # determine dimensions for the subset matrix
-    num_desired = len(pairs_to_plot)
-    total_dim = num_desired * n_ell_binned
-    subset_matrix = np.zeros((total_dim, total_dim))
+    # compute fisher matrix using finite differences
+    jacobian_columns = []
+    for param in params_to_sample:
 
-    # populate the subset matrix
-    for i in range(num_desired):
-        pair_A = pairs_to_plot[i]
-        for j in range(num_desired):
-            pair_B = pairs_to_plot[j]
-            # get the N_ell_binned x N_ell_binned block from the cov_obj
-#            block = cov_obj.get_block(pair_B, pair_A)
-            block = cov_obj.get_block(pair_A, pair_B)
-            # place it into the subset_matrix
-            subset_matrix[i * n_ell_binned : (i + 1) * n_ell_binned,
-                          j * n_ell_binned : (j + 1) * n_ell_binned] = block
+        # get step size -- default to 1e-4
+        eps = steps_dict.get(param, 1e-4)
+        
+        if param == 'Omega_m':
+            current_fid_val = fiducial_params['Omega_c'] + fiducial_params['Omega_b']
+        else:
+            current_fid_val = fiducial_params[param]
+            
+        M_plus = get_theory_vector({param: current_fid_val + eps})
+        M_minus = get_theory_vector({param: current_fid_val - eps})
+        
+        deriv = (M_plus - M_minus) / (2 * eps)
+        jacobian_columns.append(deriv)
+        
+    Jacobian = np.column_stack(jacobian_columns)
+    
+    if Jacobian.shape[0] != cov_dim:
+        raise ValueError(f"Vector-Covariance Mismatch! Generated vector length is {Jacobian.shape[0]}, "
+                         f"but the loaded matrix expects {cov_dim}.")
 
-    # plotting
-    plt.figure(figsize=(12, 10))
-    im = plt.imshow(subset_matrix, cmap='viridis', origin='lower',
-                    extent=[0, total_dim, 0, total_dim], # extent for proper aspect ratio/labels
-                    norm=LogNorm() # use LogNorm for better visualization of potentially wide range of values
-                    )
+    # build matrices
+    fisher_matrix = np.dot(Jacobian.T, np.dot(inv_cov, Jacobian))
+    covariance_matrix = np.linalg.inv(fisher_matrix)
 
-    # create tick positions and labels for blocks
-    tick_positions = []
-    tick_labels = []
+    # print analytical constraints
+    print("Fisher Forecast Analytical Results")
+    for idx, param in enumerate(params_to_sample):
+        fid_val = fiducial_om if param == 'Omega_m' else fiducial_params[param]
+        sigma = np.sqrt(covariance_matrix[idx, idx])
+        print(f"  {param:<10} : Fiducial = {fid_val:<10.5e} | 1-Sigma Error = {sigma:.5e}")
 
-    for k in range(num_desired):
-        tick_positions.append(k * n_ell_binned + n_ell_binned / 2)
-        label_a, label_b = pairs_to_plot[k]
-
-        # format labels nicely, handling CMB specific ones and numerical ones
-        if label_a in ['T', 'E'] and label_b in ['T', 'E']:
-            tick_labels.append(fr'$C^{{{label_a}{label_b}}}$')
-
-        elif label_a == 'phi' and label_b == 'phi':
-            tick_labels.append(fr'$C^{{\phi\phi}}$')
-
-        elif label_a.startswith('g') and label_b.startswith('g'):
-            sa = label_a.replace('g', 'g_')
-            sb = label_b.replace('g', 'g_')
-            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
-
-        elif label_a.startswith('l') and label_b.startswith('l'):
-            sa = label_a.replace('l', 'l_')
-            sb = label_b.replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
-
-        elif (label_a.startswith('g') or label_a.a.startswith('l')) and label_b == 'phi':
-            sa = label_a.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}\phi}}$')
-
-        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'phi':
-            sb = label_b.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{\phi{sb}}}$')
-
-        else:  # lens-lensing, or general case
-            sa = label_a.replace('g', 'g_').replace('l', 'l_')
-            sb = label_b.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
-
-    plt.xticks(tick_positions, tick_labels, rotation=45, ha='right', fontsize=10)
-    plt.yticks(tick_positions, tick_labels, fontsize=10)
-    plt.xlabel('Covariance component')
-    plt.ylabel('Covariance component')
-    plt.title(title)
-    plt.colorbar(im, label='Covariance Value (Log Scale)')
-    plt.grid(False) # imshow usually doesn't need grid lines over the image itself
-
-    # add lines to delineate the blocks
-    for k in range(1, num_desired):
-        plt.axvline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
-        plt.axhline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
-
-    plt.tight_layout()
-    plt.show()
-
-    return subset_matrix
-
-def plot_correlation_matrix(
-    cov_obj,
-    spectra_dict,
-    f_map,
-    binsize=1, # New parameter for binning
-    desired_spectra = None,
-    title='Subset of Gaussian Correlation Matrix'
-):
-
-    # determine which spectra to plot
-    if desired_spectra is None:
-        pairs_to_plot = f_map.pairs
-    else:
-        # Canonicalize the desired_spectra based on f_map's internal ordering
-        # This ensures consistent lookup in the covariance matrix
-        desired_pairs = create_simplified_desired_pairs(n_lens_bins=f_map.n_lens, n_source_bins=f_map.n_src, desired_spectra=desired_spectra)
-        processed_desired_pairs = []
-        for p in desired_pairs:
-            if not isinstance(p, tuple) or len(p) != 2:
-                raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
-            # Apply canonical ordering logic similar to ForecastMap._process_desired_pairs
-            if p[0] > p[1]:
-                canonical_pair = (p[1], p[0])
-            else:
-                canonical_pair = p
-            if canonical_pair not in processed_desired_pairs:
-                processed_desired_pairs.append(canonical_pair)
-        pairs_to_plot = processed_desired_pairs
-
-    # Calculate the effective number of binned ell values for plotting
-    n_ell_binned = int(np.ceil(f_map.n_ell / binsize))
-
-    # determine dimensions for the subset matrix
-    num_desired = len(pairs_to_plot)
-    total_dim = num_desired * n_ell_binned
-    subset_covariance_matrix = np.zeros((total_dim, total_dim))
-
-    # populate the subset covariance matrix
-    for i in range(num_desired):
-        pair_A = pairs_to_plot[i]
-        for j in range(num_desired):
-            pair_B = pairs_to_plot[j]
-            # get the N_ell_binned x N_ell_binned block from the cov_obj
-            block = cov_obj.get_block(pair_A, pair_B)
-            # place it into the subset_covariance_matrix
-            subset_covariance_matrix[i * n_ell_binned : (i + 1) * n_ell_binned,
-                                   j * n_ell_binned : (j + 1) * n_ell_binned] = block
-
-    # Calculate the correlation matrix
-    # Ensure that diagonal elements are non-zero before division
-    diagonal = np.sqrt(np.diag(subset_covariance_matrix))
-    # Replace zeros in diagonal with a small number to avoid division by zero
-    diagonal[diagonal == 0] = 1e-10  # A small epsilon
-    correlation_matrix = subset_covariance_matrix / np.outer(diagonal, diagonal)
-
-    # Create a mask for values exactly equal to zero
-    # mask = (correlation_matrix == 0)
-    mask = None
-
-    # plotting with Seaborn
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(correlation_matrix, cmap='viridis', vmin=-1, vmax=1, square=True,
-                cbar_kws={'label': 'Correlation Value'}, mask=mask)
-
-    # create tick positions and labels for blocks
-    tick_positions = []
-    tick_labels = []
-
-    for k in range(num_desired):
-        tick_positions.append(k * n_ell_binned + n_ell_binned / 2)
-        label_a, label_b = pairs_to_plot[k]
-        # format labels nicely, handling CMB specific ones and numerical ones
-        if label_a == 'phi' and label_b == 'phi':
-            tick_labels.append(r'$C^{\phi\phi}$')
-
-        elif label_a.startswith('g') and label_b.startswith('g'):
-            sa = label_a.replace('g', 'g_')
-            sb = label_b.replace('g', 'g_')
-            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
-
-        elif label_a.startswith('l') and label_b.startswith('l'):
-            sa = label_a.replace('l', 'l_')
-            sb = label_b.replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
-
-        elif (label_a.startswith('g') or label_a.startswith('l')) and label_b == 'phi':
-            sa = label_a.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}\phi}}$')
-
-        elif (label_b.startswith('g') or label_b.startswith('l')) and label_a == 'phi':
-            sb = label_b.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{\phi{sb}}}$')
-
-        else:  # lens-lensing, or general case
-            sa = label_a.replace('g', 'g_').replace('l', 'l_')
-            sb = label_b.replace('g', 'g_').replace('l', 'l_')
-            tick_labels.append(fr'$C^{{{sa}{sb}}}$')
-
-    plt.xticks(tick_positions, tick_labels, rotation=45, ha='right', fontsize=10)
-    plt.yticks(tick_positions, tick_labels, fontsize=10)
-    plt.xlabel('Correlation Component')
-    plt.ylabel('Correlation Component')
-    plt.title(title)
-
-    # Add lines to delineate the blocks (on top of the heatmap)
-    for k in range(1, num_desired):
-        plt.axvline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
-        plt.axhline(k * n_ell_binned, color='white', linestyle='--', linewidth=1)
-
-    plt.tight_layout()
-    plt.show()
-
-    return correlation_matrix
-
-# helper function to plot spectra from the spectra_dict
-def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None):
-    if not spectra_dict:
-        print("No spectra to plot.")
-        return
-
-    # Get the ells from the first entry in spectra_dict
-    # Assuming all spectra have the same ell values
-    first_key = next(iter(spectra_dict))
-    ells = np.arange(2, len(spectra_dict[first_key]) + 2)
-
-    # Determine which spectra to plot
-    spectra_to_plot_filtered = {}
-    if desired_spectra is None:
-        spectra_to_plot_filtered = spectra_dict # Plot all if none specified
-    else:
-        for d_pair in desired_spectra:
-            # Canonicalize the desired pair to match spectra_dict keys
-            p1, p2 = d_pair
-            # Ensure consistent key ordering (e.g., ('g1', 'l1') instead of ('l1', 'g1'))
-            # This should match how build_spectra_dict stores Cls (lexicographical order)
-            if p1 < p2:
-                canonical_pair = (p1, p2)
-            else:
-                canonical_pair = (p2, p1)
-
-            if canonical_pair in spectra_dict:
-                spectra_to_plot_filtered[canonical_pair] = spectra_dict[canonical_pair]
-            else:
-                print(f"Warning: Desired spectrum {d_pair} (canonical: {canonical_pair}) not found in spectra_dict. Skipping.")
-
-    if not spectra_to_plot_filtered:
-        print("No spectra found to plot after filtering.")
-        return
-
-    # generate a colormap with enough colors for the filtered spectra
-    colors = cm.get_cmap('tab10', len(spectra_to_plot_filtered))
-    color_idx = 0
-
-    for key, cl_values in spectra_to_plot_filtered.items():
-        plt.figure(figsize=(10, 6)) # New figure for each spectrum
-        # Use a consistent ell range for plotting
-        plt.loglog(ells, cl_values, label=f'C_l^{{{key[0]},{key[1]}}}', color=colors(color_idx % colors.N))
-        color_idx += 1
-
-        plt.xlabel(r'Multipole, $\ell$')
-        plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
-        plt.title(f'{title_prefix} for $C_l^{{{key[0]},{key[1]}}}$')
-        plt.legend(loc='best', fontsize='small')
-        plt.grid(True, which="both", ls="-")
-        plt.tight_layout()
+    # plot (maybe)
+    if plot:   
+        mean_values = [fiducial_om if p == 'Omega_m' else fiducial_params[p] for p in params_to_sample]
+        param_labels = [p.replace('_', r'\_') for p in params_to_sample]
+        
+        # Initialize the GetDist analytical distribution
+        fisher_gaussian = GaussianND(mean_values, covariance_matrix, names=params_to_sample, labels=param_labels)
+        
+        g = plots.get_subplot_plotter(subplot_size=3.5)
+        g.settings.num_plot_contours = 2
+        
+        # If 1 parameter, g.triangle_plot automatically renders a clean 1D line plot!
+        # If 2+ parameters, it automatically renders the multi-D triangle contour layout.
+        g.triangle_plot(fisher_gaussian, params=params_to_sample, filled=True, colors=['firebrick'])
         plt.show()
 
+    # return matrices
+    return fisher_matrix, covariance_matrix
+    
 def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     if z_arr is None:
         a_grid = np.linspace(1/(1+5), 1.0, 20)
