@@ -233,34 +233,6 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
     plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
     print(f"Saved trace plot to: {trace_save_path}")
     plt.show()
-    # --- 4. TRACE PLOTS ---
-    fig, axes = plt.subplots(len(sampled_params), 1, figsize=(12, 3 * len(sampled_params)), sharex=True)
-    if len(sampled_params) == 1:
-        axes = [axes]
-
-    for idx, param in enumerate(sampled_params):
-        col_idx = idx + 2
-        ax = axes[idx]
-        
-        for i, chain_data in enumerate(raw_chain_data):
-            ax.plot(chain_data[:, col_idx], alpha=0.6, linewidth=0.8, label=f'Chain {i}' if idx == 0 else "")
-        
-        ax.axhline(y=peaks[param], color='crimson', linestyle=':', alpha=0.8, label=f'Peak: {peaks[param]:.4f}')
-        ax.axhline(y=fiducial_vals[param], color='black', linestyle='--', alpha=0.6, label=f'Fiducial: {fiducial_vals[param]:.4f}')
-        
-        param_label = latex_labels.get(param, param)
-        ax.set_ylabel(f"${param_label}$")
-        ax.legend(loc='upper right', fontsize=9)
-        ax.grid(True, alpha=0.3)
-        
-    axes[0].set_title(f"MCMC Trace Plots: {display_title}", fontsize=12)
-    axes[-1].set_xlabel('Step Number (Including Burn-in)')
-    
-    plt.tight_layout()
-    trace_save_path = os.path.join(output_dir, f"{clean_run_name}_traces.png")
-    plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
-    print(f"Saved trace plot to: {trace_save_path}")
-    plt.show()
     
 # calcualte and (maybe) plot angular power spectra
 def calculate_and_plot_Cls(
