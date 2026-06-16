@@ -71,17 +71,6 @@ def _find_key_recursive(data, target_key):
 # plot traces and contour plots from Cobaya, including reference points
 # mark if the run was incomplete, but assume it was complete unless otherwise stated
 def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4, burn_in_fraction=0.2, output_dir='plots', complete=True):
-    """
-    Automates loading Cobaya MCMC chains, parsing a custom likelihood YAML file for 
-    fiducial values, extracting starting positions, and creating triangle & trace plots.
-    Strips 'likelihood' from filenames and titles.
-    
-    Parameters:
-    -----------
-    complete : bool, optional
-        If True (default), plots are treated as final. If False, adds '(incomplete)' 
-        to the text titles and '_(incomplete)' to the saved filenames.
-    """
     
     # 1. Parse Fiducial Cosmology dynamically from the YAML structure
     print(f"Reading fiducial values from: {yaml_path}")
