@@ -931,7 +931,7 @@ def slice_matrix(
     return sliced_cov_obj
 
 # fisher forecast
-def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_noise_source, shot_noise_lens, CMB_noise_phi, cov_path, params_to_sample, 
+def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_noise_source, shot_noise_lens, cmb_noise_phi, cov_path, params_to_sample, 
                              n_ell=5000, binsize=50, magnification_bias_lenses = 0.8, desired_spectra = None, linear_emulator = None, 
                              boost_emulator = None, steps_dict=None, plot = False):
     
@@ -982,7 +982,7 @@ def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_n
         # build spectra
         lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, CMB_noise_phi)
+        noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
         full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
 
         if desired_spectra != None: 
