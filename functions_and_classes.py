@@ -1300,7 +1300,8 @@ def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C
     
     # return Fisher and covariance matrix
     return F, cov
-    
+
+# old fisher forecast function -- doesn't consider changes in cov
 def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_noise_source, shot_noise_lens, cmb_noise_phi, cov_path, params_to_sample, 
                              n_ell=5000, binsize=50, magnification_bias_lenses = 0.8, desired_spectra = None, linear_emulator = None, 
                              boost_emulator = None, steps_dict=None, plot = False):
