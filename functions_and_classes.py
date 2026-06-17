@@ -3560,3 +3560,109 @@ class FisherForecaster:
         )
         
         return mcsamples
+
+    # generate contour plot with or w/o Cobaya and prior-less version overlaid
+    def plot_with_cobaya_overlay(
+        self, 
+        param_names=None, 
+        title="Fisher Forecast vs. Cobaya MCMC Constraints",
+        cobaya_chain_dir=None, 
+        sampled_params=None, 
+        num_chains=4, 
+        burn_in_fraction=0.2,
+        uniform_priors=None,
+        overlay_priorless=False, 
+        num_samples = 200000
+    ):
+      
+        if param_names is None:
+            param_names = self.desired_params
+            
+        plot_datasets = []
+        legend_labels = []
+        contour_colors = []
+
+        # 1. Generate Fisher samples with the specified priors
+        fisher_samples = self.sample_fisher_with_uniform_priors(
+            uniform_priors=uniform_priors, 
+            num_samples=num_samples
+        )
+        plot_datasets.append(fisher_samples)
+        legend_labels.append("Fisher Forecast (With Priors)" if uniform_priors else "Fisher Forecast")
+        contour_colors.append("firebrick")
+
+        # Optional: Generate and overlay the prior-less Fisher distribution
+        if overlay_priorless and uniform_priors is not None:
+            fisher_priorless = self.sample_fisher_with_uniform_priors(
+                uniform_priors=None, 
+                num_samples=num_samples
+            )
+            plot_datasets.append(fisher_priorless)
+            legend_labels.append("Fisher Forecast (No Priors)")
+            contour_colors.append("gray")
+        
+        # Parse and load Cobaya chains if directory is given
+        if cobaya_chain_dir is not None:
+            if sampled_params is None:
+                sampled_params = param_names
+                
+            all_weights = []
+            all_loglikes = []
+            param_tracks = {p: [] for p in sampled_params}
+            
+            print(f"Processing {num_chains} Cobaya chains from: {cobaya_chain_dir}")
+            for i in range(num_chains):
+                chain_path = os.path.join(cobaya_chain_dir, f"chain_task_{i}.txt")
+                if os.path.exists(chain_path):
+                    data = np.loadtxt(chain_path)
+                    burn = int(burn_in_fraction * len(data))
+                    
+                    all_weights.append(data[burn:, 0])
+                    all_loglikes.append(data[burn:, 1])
+                    for idx, param in enumerate(sampled_params):
+                        col_idx = idx + 2  # Skip weight and loglike columns
+                        param_tracks[param].append(data[burn:, col_idx])
+                else:
+                    print(f"Warning: {chain_path} not found. Skipping.")
+            
+            if len(all_weights) == 0:
+                raise FileNotFoundError(f"No valid chain files found in {cobaya_chain_dir}")
+                
+            combined_samples = np.column_stack([np.concatenate(param_tracks[p]) for p in sampled_params])
+            
+            # Map parameters to clean LaTeX labels for GetDist
+            latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0', 'A_s': r'A_s', 'h': r'h'}
+            labels = [latex_labels.get(p, p) for p in sampled_params]
+            
+            mcmc_samples = MCSamples(
+                samples=combined_samples,
+                weights=np.concatenate(all_weights),
+                loglikes=np.concatenate(all_loglikes),
+                names=sampled_params,
+                labels=labels,
+                settings={'ignore_rows': 0.0}
+            )
+            
+            plot_datasets.append(mcmc_samples)
+            legend_labels.append("Cobaya MCMC")
+            contour_colors.append("darkblue")
+            
+        # 4. Create GetDist Subplot Plotter and generate the grid
+        n_params = len(param_names)
+        g = plots.get_subplot_plotter(width_inch=2.5 * n_params)
+        
+        # Extract fiducial values in correct order for markers
+        fiducial_vals = {p: float(self.fiducial_dict[p]) for p in param_names if p in self.fiducial_dict}
+        
+        g.triangle_plot(
+            plot_datasets,
+            params=param_names,
+            filled=True,
+            contour_colors=contour_colors,
+            legend_labels=legend_labels,
+            markers=fiducial_vals,
+            title_limit=1
+        )
+        
+        plt.suptitle(title, y=1.02, fontsize=12)
+        return g
