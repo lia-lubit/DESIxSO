@@ -1,0 +1,118 @@
+        # Build fiducial covariance and theory vector if missing
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        if mu is None:
+            mu = self.get_theory_vector(self.cosmology)
+            
+        if C_derivatives is None or mu_derivatives is None:
+            C_derivatives, mu_derivatives = self.get_derivatives(desired_params)
+
+        n_params = len(desired_params)
+        F = np.zeros((n_params, n_params))
+        inv_C = np.linalg.inv(C)
+        
+        for i, p_i in enumerate(desired_params):
+            for j, p_j in enumerate(desired_params):
+                dC_di = C_derivatives[p_i]
+                dC_dj = C_derivatives[p_j]
+                
+                dmu_di = mu_derivatives[p_i][:, np.newaxis]
+                dmu_dj = mu_derivatives[p_j][:, np.newaxis]
+
+                matrix1 = inv_C @ dC_di @ inv_C @ dC_dj
+                matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
+                F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
+        
+        self.F = F
+        self.cov = np.linalg.inv(F)   
+        
+        # Print results in a highly readable format
+        print("\n--- Fisher Forecast Results ---")
+        for i, p_name in enumerate(self.desired_params):
+            sigma = np.sqrt(self.cov[i, i])
+            error_str = f"{sigma:.3e}" if sigma < 0.001 else f"{sigma:.4f}"
+            print(f"The uncertainty on {p_name} is {error_str}")
+        print("--------------------------------\n")
+        
+        return self.F, self.cov
+
+    def plot_contours(self, title="Fisher Forecast Contours"):
+        """Generates the Triangle plot and returns the figure object for easy saving."""
+        if self.cov is None:
+            raise ValueError("You must execute make_fisher_matrix() before plotting!")
+            
+        n_params = len(self.desired_params)
+        fig, axes = plt.subplots(n_params, n_params, figsize=(2.5 * n_params, 2.5 * n_params))
+        if n_params == 1:
+            axes = np.array([[axes]])
+            
+        fig.suptitle(title, fontsize=14, y=1.02)
+        scale_68 = np.sqrt(2.30)
+        scale_95 = np.sqrt(6.18)
+        
+        for i in range(n_params):
+            p_i = self.desired_params[i]
+            val_i = self.fiducial_dict[p_i]
+            sigma_i = np.sqrt(self.cov[i, i])
+            
+            for j in range(n_params):
+                p_j = self.desired_params[j]
+                val_j = self.fiducial_dict[p_j]
+                ax = axes[i, j]
+                
+                if j > i:
+                    ax.axis('off')
+                    continue
+                    
+                if i == j:
+                    x = np.linspace(val_i - 4 * sigma_i, val_i + 4 * sigma_i, 200)
+                    y = (1.0 / (sigma_i * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - val_i) / sigma_i) ** 2)
+                    ax.plot(x, y, color='firebrick', lw=2)
+                    ax.axvline(val_i, color='black', linestyle='--', alpha=0.6)
+                    ax.set_xlim(x[0], x[-1])
+                    ax.set_yticklabels([])
+                    ax.set_yticks([])
+                    if i == n_params - 1:
+                        ax.set_xlabel(p_i, fontsize=12)
+                    else:
+                        ax.set_xticklabels([])
+                        
+                else:
+                    sub_cov = self.cov[np.ix_([j, i], [j, i])]
+                    evals, evecs = np.linalg.eigh(sub_cov)
+                    order = evals.argsort()[::-1]
+                    evals, evecs = evals[order], evecs[:, order]
+                    angle = np.degrees(np.arctan2(evecs[1, 0], evecs[0, 0]))
+                    
+                    width_68 = 2 * scale_68 * np.sqrt(evals[0])
+                    height_68 = 2 * scale_68 * np.sqrt(evals[1])
+                    width_95 = 2 * scale_95 * np.sqrt(evals[0])
+                    height_95 = 2 * scale_95 * np.sqrt(evals[1])
+                    
+                    ellipse_95 = Ellipse(xy=(val_j, val_i), width=width_95, height=height_95, 
+                                         angle=angle, facecolor='firebrick', alpha=0.3, edgecolor='firebrick', lw=1)
+                    ax.add_patch(ellipse_95)
+                    
+                    ellipse_68 = Ellipse(xy=(val_j, val_i), width=width_68, height=height_68, 
+                                         angle=angle, facecolor='firebrick', alpha=0.6, edgecolor='firebrick', lw=1.5)
+                    ax.add_patch(ellipse_68)
+                    
+                    ax.plot(val_j, val_i, marker='x', color='black', markersize=6)
+                    sigma_j = np.sqrt(self.cov[j, j])
+                    ax.set_xlim(val_j - 3.5 * sigma_j, val_j + 3.5 * sigma_j)
+                    ax.set_ylim(val_i - 3.5 * sigma_i, val_i + 3.5 * sigma_i)
+                    
+                    if i == n_params - 1:
+                        ax.set_xlabel(p_j, fontsize=12)
+                    else:
+                        ax.set_xticklabels([])
+                    if j == 0:
+                        ax.set_ylabel(p_i, fontsize=12)
+                    else:
+                        ax.set_yticklabels([])
+                        
+        plt.tight_layout()
+        # Matplotlib gets current open figure before returning, allowing you to save outside
+        fig = plt.gcf() 
+        return fig
