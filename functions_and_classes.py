@@ -3562,6 +3562,7 @@ class FisherForecaster:
         return mcsamples
 
     # generate contour plot with or w/o Cobaya and prior-less version overlaid
+    # for prior-less forecasts, make simple Gaussian ellipses instead of sampling
     def plot_with_cobaya_overlay(
         self, 
         param_names=None, 
@@ -3572,9 +3573,12 @@ class FisherForecaster:
         burn_in_fraction=0.2,
         uniform_priors=None,
         overlay_priorless=False, 
-        num_samples = 200000
+        num_samples=200000
     ):
-      
+        from getdist.gaussian_mixtures import GaussianND
+
+        # if specified, plot only a subset of the forecast
+        # by default, plot full contour plot with every param from desired_params
         if param_names is None:
             param_names = self.desired_params
             
@@ -3582,26 +3586,42 @@ class FisherForecaster:
         legend_labels = []
         contour_colors = []
 
-        # 1. Generate Fisher samples with the specified priors
-        fisher_samples = self.sample_fisher_with_uniform_priors(
-            uniform_priors=uniform_priors, 
-            num_samples=num_samples
-        )
-        plot_datasets.append(fisher_samples)
+        # 1. Define clean LaTeX labels up front so all datasets can use them
+        latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0', 'A_s': r'A_s', 'h': r'h'}
+        labels = [latex_labels.get(p, p) for p in param_names]
+
+        #### test this -- I'm a little concerned that the slicing might screw things up, but I know it's not nearly as sensitive as the MCMC in this regard
+        # Helper to extract the correct sliced covariance matrix for GetDist
+        def get_sliced_cov_and_fiducial():
+            fiducial_values = [float(self.fiducial_dict[p]) for p in param_names]
+            # Ensure we pull indices corresponding to the selected param_names
+            indices = [self.desired_params.index(p) for p in param_names]
+            sliced_cov = self.cov[np.ix_(indices, indices)]
+            return fiducial_values, sliced_cov
+
+        # 2. Get main Fisher results
+        if uniform_priors is None:
+            # Exact analytical Gaussian representation (No sampling noise!)
+            fiducial_values, sliced_cov = get_sliced_cov_and_fiducial()
+            fisher_dataset = GaussianND(fiducial_values, sliced_cov, names=param_names, labels=labels)
+        else:
+            # Fall back to sampling only if hard prior walls truncate the distribution
+            fisher_dataset = self.sample_fisher_with_uniform_priors(uniform_priors=uniform_priors, num_samples=num_samples)
+        
+        plot_datasets.append(fisher_dataset)
         legend_labels.append("Fisher Forecast (With Priors)" if uniform_priors else "Fisher Forecast")
         contour_colors.append("firebrick")
 
-        # Optional: Generate and overlay the prior-less Fisher distribution
+        # 3. Optional: Generate and overlay the exact prior-less Fisher distribution
         if overlay_priorless and uniform_priors is not None:
-            fisher_priorless = self.sample_fisher_with_uniform_priors(
-                uniform_priors=None, 
-                num_samples=num_samples
-            )
+            fiducial_values, sliced_cov = get_sliced_cov_and_fiducial()
+            fisher_priorless = GaussianND(fiducial_values, sliced_cov, names=param_names, labels=labels)
+            
             plot_datasets.append(fisher_priorless)
             legend_labels.append("Fisher Forecast (No Priors)")
             contour_colors.append("gray")
         
-        # Parse and load Cobaya chains if directory is given
+        # 4. Parse and load Cobaya chains if directory is given
         if cobaya_chain_dir is not None:
             if sampled_params is None:
                 sampled_params = param_names
@@ -3629,17 +3649,14 @@ class FisherForecaster:
                 raise FileNotFoundError(f"No valid chain files found in {cobaya_chain_dir}")
                 
             combined_samples = np.column_stack([np.concatenate(param_tracks[p]) for p in sampled_params])
-            
-            # Map parameters to clean LaTeX labels for GetDist
-            latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0', 'A_s': r'A_s', 'h': r'h'}
-            labels = [latex_labels.get(p, p) for p in sampled_params]
+            cobaya_labels = [latex_labels.get(p, p) for p in sampled_params]
             
             mcmc_samples = MCSamples(
                 samples=combined_samples,
                 weights=np.concatenate(all_weights),
                 loglikes=np.concatenate(all_loglikes),
                 names=sampled_params,
-                labels=labels,
+                labels=cobaya_labels,
                 settings={'ignore_rows': 0.0}
             )
             
@@ -3647,7 +3664,7 @@ class FisherForecaster:
             legend_labels.append("Cobaya MCMC")
             contour_colors.append("darkblue")
             
-        # 4. Create GetDist Subplot Plotter and generate the grid
+        # 5. Create GetDist Subplot Plotter and generate the grid
         n_params = len(param_names)
         g = plots.get_subplot_plotter(width_inch=2.5 * n_params)
         
