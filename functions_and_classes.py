@@ -31,7 +31,7 @@ from cosmopower_jax.cosmopower_jax import CosmoPowerJAX as CPJ
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import LogNorm
-from getdist.gaussian_mixtures import GaussianND
+from matplotlib.patches import Ellipse
 import seaborn as sns
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -164,6 +164,9 @@ def plot_fisher_contours(cosmology, fisher_matrix, param_names = None, fiducial_
                     
     plt.tight_layout()
     plt.show()
+    
+    fig = plt.gcf() # gcf = "Get Current Figure"
+    return fig
     
 def _find_key_recursive(data, target_key):
     """Recursively searches for a key in a nested dictionary/list structure."""
@@ -1133,7 +1136,6 @@ def get_derivatives(fiducial_params, covariance_matrix, data_vector, lens_data, 
                        magnification_bias_lenses = None, desired_spectra = None, linear_emulator = None, boost_emulator = None):
 
     print("Getting derivatives.")
-    print("Derivatives start time: ", time.time())
     
     C_derivatives = {}
     mu_derivatives = {}
@@ -1208,15 +1210,13 @@ def get_derivatives(fiducial_params, covariance_matrix, data_vector, lens_data, 
         )
 
         C_derivatives[param] = (cov_obj_up.matrix - cov_obj_down.matrix) / (2.0 * step)
-    
-    print("Derivatives end time: ", time.time())
-    
+        
     return C_derivatives, mu_derivatives
     
 # build fisher matrix and covariance matrix
 # make sure that if a covariance matrix and a data vector etc. are passed, that all things have the same desired_spectra
-def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C_derivatives = None, mu_derivatives = None, desired_params = None, step_dict = None, 
-                       f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, shape_noise_source = None, cmb_noise_phi = None, 
+def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C_derivatives = None, mu_derivatives = None, desired_params = None, 
+                       step_dict = None, f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, shape_noise_source = None, cmb_noise_phi = None, 
                        magnification_bias_lenses = None, desired_spectra = None, linear_emulator = None, boost_emulator = None):
 
     # build param dict
@@ -1269,8 +1269,6 @@ def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C
     
     # compute the inverse of the data covariance matrix
     inv_C = np.linalg.inv(C)
-
-    print("Computation loop start time: ", time.time())
     
     # loop through the desired parameters by index to build the matrix
     for i, p_i in enumerate(desired_params):
@@ -1288,18 +1286,17 @@ def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C
             matrix1 = inv_C @ dC_di @ inv_C @ dC_dj
             matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
             F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
-
-    print("Computation loop end time: ", time.time())
         
     # invert the Fisher matrix to get the parameter covariance matrix
     cov = np.linalg.inv(F)   
     
     # print uncertainties
+    print("")
     print("Fisher Forecast Marginalized Uncertainties")
     for i, p_name in enumerate(desired_params):
         sigma = np.sqrt(cov[i, i])
         # Using scientific notation formats like 1.23e-04 for clean alignment
-        print(f"σ({p_name:<10}) = {sigma:.6e}")
+        print(f"The uncertainty on {p_name} is approximately {sigma:.6e}")
     
     # return Fisher and covariance matrix
     return F, cov
