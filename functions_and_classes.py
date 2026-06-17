@@ -1076,7 +1076,7 @@ def extract_param_dict(cosmology):
     return fiducial_params
     
 # build data vector for desired_spectra using your custom dataset arguments
-def get_theory_vector(cosmology, lens_data, source_data, f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, 
+def build_theory_vector(cosmology, lens_data, source_data, f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, 
                       shape_noise_source = None, cmb_noise_phi = None, magnification_bias_lenses = None, desired_spectra = None, 
                       linear_emulator = None, boost_emulator = None):
     
@@ -1187,10 +1187,10 @@ def get_derivatives(fiducial_params, covariance_matrix, data_vector, lens_data, 
         cosmology_down.compute_growth()
 
         # compute vector derivative
-        mu_up = get_theory_vector(cosmology_up, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize, 
+        mu_up = build_theory_vector(cosmology_up, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize, 
                                   shot_noise_lens=shot_noise_lens, shape_noise_source=shape_noise_source, cmb_noise_phi=cmb_noise_phi, 
                                   magnification_bias_lenses=magnification_bias_lenses, desired_spectra=desired_spectra, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
-        mu_down = get_theory_vector(cosmology_down, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize, 
+        mu_down = build_theory_vector(cosmology_down, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize, 
                                     shot_noise_lens=shot_noise_lens, shape_noise_source=shape_noise_source, cmb_noise_phi=cmb_noise_phi, 
                                     magnification_bias_lenses=magnification_bias_lenses, desired_spectra=desired_spectra, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
         
@@ -1247,7 +1247,7 @@ def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C
     # make data vector if none has been provided
     if mu is None:
         
-        mu = get_theory_vector(cosmology, lens_data = lens_data, source_data = source_data, f_sky = f_sky, n_ell = n_ell, binsize = binsize, 
+        mu = build_theory_vector(cosmology, lens_data = lens_data, source_data = source_data, f_sky = f_sky, n_ell = n_ell, binsize = binsize, 
                               shot_noise_lens = shot_noise_lens, shape_noise_source = shape_noise_source, cmb_noise_phi = cmb_noise_phi, 
                               magnification_bias_lenses = magnification_bias_lenses, desired_spectra = desired_spectra, linear_emulator = linear_emulator, boost_emulator = boost_emulator)
 
@@ -1331,7 +1331,7 @@ def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_n
         }
 
     # build data vector for desired_spectra using your custom dataset arguments
-    def get_theory_vector(current_params):
+    def build_theory_vector(current_params):
         p = {**fiducial_params, **current_params}
         
         if 'Omega_m' in current_params:
@@ -1397,8 +1397,8 @@ def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_n
         else:
             current_fid_val = fiducial_params[param]
             
-        M_plus = get_theory_vector({param: current_fid_val + eps})
-        M_minus = get_theory_vector({param: current_fid_val - eps})
+        M_plus = build_theory_vector({param: current_fid_val + eps})
+        M_minus = build_theory_vector({param: current_fid_val - eps})
         
         deriv = (M_plus - M_minus) / (2 * eps)
         jacobian_columns.append(deriv)
@@ -3235,25 +3235,19 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
         
         return chi2
 
-# make Fisher Forecast class
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
-# Assuming pyccl is imported as ccl
-
+# Fisher Forecast class
+# the function method involves passing the same things over and over again to different functions
+# this becomes inefficient and a bit messy
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_phi=None, 
                  magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None):
-        """
-        Initializes the forecaster with a baseline cosmology and survey configurations.
-        """
+
         self.cosmology = cosmology
         self.lens_data = lens_data
         self.source_data = source_data
-        
-        # Survey settings stored as class attributes
+                     
         self.survey_params = {
             'f_sky': f_sky, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
@@ -3261,20 +3255,34 @@ class FisherForecaster:
             'desired_spectra': desired_spectra, 'linear_emulator': linear_emulator, 'boost_emulator': boost_emulator
         }
         
-        # Step sizes for numerical derivatives
+        # step sizes for numerical derivatives
         self.step_dict = step_dict if step_dict is not None else {
             'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 'Omega_k': 1e-3
         }
         
-        # Extract and freeze our baseline fiducial truths
+        # extract and freeze our baseline fiducial truths
         self.fiducial_dict = self._extract_param_dict(self.cosmology)
         
-        # Matrices initialized to None until computed
-        self.F = None    # Fisher Matrix
-        self.cov = None  # Parameter Covariance Matrix
-        
+        # matrices initialized to None until computed
+        self.F = None    # Fisher matrix
+        self.cov = None  # parameter covariance matrix
+
+        # build full f_map, etc. so that I don't have to remake them every time I call build_theory_vector
+        p = self.survey_params
+        self.ells = np.arange(2, p['n_ell'] + 2)
+        self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
+        self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'])
+      
+        if p['desired_spectra'] is not None:
+            sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
+            self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs)
+            self.sliced_pairs = sliced_pairs
+        else:
+            self.final_f_map = self.full_f_map
+            self.sliced_pairs = None
+
+    # get parameter dictionary from a ccl cosmology (I usually pass cosmologies, not dictionaries)
     def _extract_param_dict(self, cosmology):
-        """Helper to get tracking dict from a CCL cosmology object."""
         h = cosmology['h']
         Omega_b = cosmology['Omega_b']
         Omega_c = cosmology['Omega_c']
@@ -3295,69 +3303,58 @@ class FisherForecaster:
             'Omega_k': Omega_k
         }
 
-    def get_theory_vector(self, cosmology):
-        """Computes the binned observable data vector using stored survey constraints."""
-        print("Computing theory vector...")
+    # build a data vector given parameters
+    def build_theory_vector(self, cosmology, silent=True):
+
+        if not silent:
+            print("Computing theory vector...")
+    
         cosmology.compute_growth()
         p = self.survey_params
         
-        ells = np.arange(2, p['n_ell'] + 2)
-        full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'])
-
         lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
             cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses']
         )
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(full_f_map, ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_phi'])
-        full_spectra_dict = build_spectra_dict(
-            cosmology, full_f_map, tracer_dict, ells, noise_dict, 
-            linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator']
-        )
+        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_phi'])
+        full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, 
+                                               linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'])
 
-        if p['desired_spectra'] is not None: 
-            sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
-            sliced_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs)
-            sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
-            final_f_map = sliced_f_map
-            final_spectra_dict = sliced_spectra_dict
+        if self.sliced_pairs is not None: 
+            final_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in self.sliced_pairs}
         else:
-            final_f_map = full_f_map
             final_spectra_dict = full_spectra_dict
             
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
-        
-        for pair in final_f_map.pairs:
+        model_data_vector = []
+        for pair in self.final_f_map.pairs:
             unbinned_cls = final_spectra_dict[pair]
-            binned_cls_for_pair = []
             for i in range(0, p['n_ell'], p['binsize']):
                 end_idx = min(i + p['binsize'], len(unbinned_cls))
                 if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
+                    model_data_vector.append(np.mean(unbinned_cls[i:end_idx]))
                 else:
-                    binned_cls_for_pair.append(0.0)
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-
+                    model_data_vector.append(0.0)
+        
         return np.array(model_data_vector)
 
+    # manually compute derivatives
     def get_derivatives(self, desired_params):
-        """Computes data vector and covariance matrix derivatives numerically via finite differences."""
         print("Getting derivatives...")
         C_derivatives = {}
         mu_derivatives = {}
         p = self.survey_params
         
         for param in desired_params:
+            # get step size, default to 1e-3
             step = self.step_dict.get(param, 1e-3)
             
             params_up = self.fiducial_dict.copy()
             params_down = self.fiducial_dict.copy()
             params_up[param] += step
             params_down[param] -= step
-            
-            # Keeps Omega_m constant while varying Omega_b by adjusting Omega_c under the hood!
+
+            # since I'm generally sampling over Omega_m, not Omega_c
+            # when taking derivatives and varying Omega_b I'll keep Omega_m constant by adjusting Omega_c under the hood
             cosmology_up = ccl.Cosmology(
                 Omega_c = params_up['Omega_m'] - params_up['Omega_b'],
                 Omega_b = params_up['Omega_b'],
@@ -3385,8 +3382,8 @@ class FisherForecaster:
             cosmology_up.compute_growth()
             cosmology_down.compute_growth()
 
-            mu_up = self.get_theory_vector(cosmology_up)
-            mu_down = self.get_theory_vector(cosmology_down)
+            mu_up = self.build_theory_vector(cosmology_up)
+            mu_down = self.build_theory_vector(cosmology_down)
             mu_derivatives[param] = (mu_up - mu_down) / (2.0 * step)
 
             cov_obj_up, _, _ = build_covariance_from_data(cosmology_up, self.lens_data, self.source_data, **p)
@@ -3395,20 +3392,22 @@ class FisherForecaster:
             
         return C_derivatives, mu_derivatives
 
+    # build and invert Fisher matrix without considering priors, since they are uniform, not Gaussian
     def make_fisher_matrix(self, desired_params=None, C=None, mu=None, C_derivatives=None, mu_derivatives=None):
-        """Builds the Fisher Matrix, inverts it, and displays plain-English constraints."""
+        
+        # default to full Fisher matrix
         if desired_params is None:
             desired_params = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k']
         
         self.desired_params = desired_params
         p = self.survey_params
 
-        # Build fiducial covariance and theory vector if missing
+        # build fiducial covariance and theory vector if they are missing
         if C is None:
             cov_obj, _, _ = build_covariance_from_data(self.cosmology, self.lens_data, self.source_data, **p)
             C = cov_obj.matrix
         if mu is None:
-            mu = self.get_theory_vector(self.cosmology)
+            mu = self.build_theory_vector(self.cosmology)
             
         if C_derivatives is None or mu_derivatives is None:
             C_derivatives, mu_derivatives = self.get_derivatives(desired_params)
@@ -3432,18 +3431,20 @@ class FisherForecaster:
         self.F = F
         self.cov = np.linalg.inv(F)   
         
-        # Print results in a highly readable format
-        print("\n--- Fisher Forecast Results ---")
+        # print results in a highly readable format
+        print("")
+        print("Fisher Forecast Results Without Priors")
         for i, p_name in enumerate(self.desired_params):
             sigma = np.sqrt(self.cov[i, i])
             error_str = f"{sigma:.3e}" if sigma < 0.001 else f"{sigma:.4f}"
             print(f"The uncertainty on {p_name} is {error_str}")
-        print("--------------------------------\n")
+        print("")
         
         return self.F, self.cov
 
+    # plot contours
     def plot_contours(self, title="Fisher Forecast Contours"):
-        """Generates the Triangle plot and returns the figure object for easy saving."""
+
         if self.cov is None:
             raise ValueError("You must execute make_fisher_matrix() before plotting!")
             
@@ -3518,6 +3519,44 @@ class FisherForecaster:
                         ax.set_yticklabels([])
                         
         plt.tight_layout()
-        # Matplotlib gets current open figure before returning, allowing you to save outside
         fig = plt.gcf() 
         return fig
+
+    def sample_fisher_with_uniform_priors(self, uniform_priors=None, num_samples=200000):
+        
+        if self.cov is None:
+            raise ValueError("Covariance matrix 'self.cov' is not computed yet. Run your Fisher execution pipeline first.")
+            
+        # gather the center (fiducial values) in the exact order of desired_params
+        fiducial_values = [self.fiducial_dict[p] for p in self.desired_params]
+        
+        # draw rapid multivariate normal samples based on the Fisher covariance
+        print(f"Generating {num_samples} mock samples from Fisher covariance...")
+        samples = np.random.multivariate_normal(fiducial_values, self.cov, size=num_samples)
+        
+        # apply uniform prior cuts (mask out samples that exceed boundaries)
+        if uniform_priors is not None:
+            mask = np.ones(num_samples, dtype=bool)
+            for idx, param_name in enumerate(self.desired_params):
+                if param_name in uniform_priors:
+                    p_min, p_max = uniform_priors[param_name]
+                    # Update mask to only keep samples within the hard walls
+                    mask &= (samples[:, idx] >= p_min) & (samples[:, idx] <= p_max)
+            
+            samples = samples[mask]
+            print(f"Uniform priors applied. Retained {len(samples)} valid samples.")
+            
+            if len(samples) == 0:
+                raise ValueError("Zero samples survived the uniform prior cuts. Check if your fiducial values sit outside your prior bounds!")
+
+        # Convert into a GetDist MCSamples object for seamless plotting
+        param_labels = [p for p in self.desired_params] 
+        
+        mcsamples = MCSamples(
+            samples=samples, 
+            names=self.desired_params, 
+            labels=param_labels, 
+            name_tag="Fisher (with Uniform Priors)"
+        )
+        
+        return mcsamples
