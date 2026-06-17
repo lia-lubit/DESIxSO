@@ -1,4 +1,107 @@
-        # Build fiducial covariance and theory vector if missing
+        self.step_dict = step_dict if step_dict is not None else {
+            'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 'Omega_k': 1e-3
+        }
+        
+        # Extract and freeze our baseline fiducial truths
+        self.fiducial_dict = self._extract_param_dict(self.cosmology)
+        
+        # Matrices initialized to None until computed
+        self.F = None    # Fisher Matrix
+        self.cov = None  # Parameter Covariance Matrix
+        
+    def _extract_param_dict(self, cosmology):
+        """Helper to get tracking dict from a CCL cosmology object."""
+        h = cosmology['h']
+        Omega_b = cosmology['Omega_b']
+        Omega_c = cosmology['Omega_c']
+        A_s = cosmology['A_s']
+        n_s = cosmology['n_s']
+        w0 = cosmology['w0']
+        wa = cosmology['wa']
+        Omega_k = cosmology['Omega_k']
+        
+        return {
+            'Omega_m': Omega_c + Omega_b,
+            'Omega_b': Omega_b,
+            'h':       h,
+            'A_s':     A_s,
+            'n_s':     n_s,
+            'w0':      w0,
+            'wa':      wa,
+            'Omega_k': Omega_k
+        }
+
+    def get_theory_vector(self, cosmology):
+        """Computes the binned observable data vector using stored survey constraints."""
+        print("Computing theory vector...")
+        cosmology.compute_growth()
+        p = self.survey_params
+        
+        ells = np.arange(2, p['n_ell'] + 2)
+        full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'])
+
+        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+            cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses']
+        )
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        noise_dict = build_noise_dict(full_f_map, ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_phi'])
+        full_spectra_dict = build_spectra_dict(
+            cosmology, full_f_map, tracer_dict, ells, noise_dict, 
+            linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator']
+        )
+
+        if p['desired_spectra'] is not None: 
+            sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
+            sliced_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs)
+            sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
+            final_f_map = sliced_f_map
+            final_spectra_dict = sliced_spectra_dict
+        else:
+            final_f_map = full_f_map
+            final_spectra_dict = full_spectra_dict
+            
+        model_data_vector = np.array([])
+        num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
+        
+        for pair in final_f_map.pairs:
+            unbinned_cls = final_spectra_dict[pair]
+            binned_cls_for_pair = []
+            for i in range(0, p['n_ell'], p['binsize']):
+                end_idx = min(i + p['binsize'], len(unbinned_cls))
+                if i < end_idx:
+                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
+                else:
+                    binned_cls_for_pair.append(0.0)
+            while len(binned_cls_for_pair) < num_binned_ells:
+                binned_cls_for_pair.append(0.0)
+            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
+
+        return np.array(model_data_vector)
+
+    def get_derivatives(self, desired_params):
+        """Computes data vector and covariance matrix derivatives numerically via finite differences."""
+        print("Getting derivatives...")
+        C_derivatives = {}
+        mu_derivatives = {}
+        p = self.survey_params
+        
+        for param in desired_params:
+            step = self.step_dict.get(param, 1e-3)
+            
+            params_up = self.fiducial_dict.copy()
+            params_down = self.fiducial_dict.copy()
+            params_up[param] += step
+            params_down[param] -= step
+            
+            # Keeps Omega_m constant while varying Omega_b by adjusting Omega_c under the hood!
+            cosmology_up = ccl.Cosmology(
+                Omega_c = params_up['Omega_m'] - params_up['Omega_b'],
+                Omega_b = params_up['Omega_b'],
+                h       = params_up['h'],
+                A_s     = params_up['A_s'],
+                n_s     = params_up['n_s'],
+
+# Build fiducial covariance and theory vector if missing
         if C is None:
             cov_obj, _, _ = build_covariance_from_data(self.cosmology, self.lens_data, self.source_data, **p)
             C = cov_obj.matrix
