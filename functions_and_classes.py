@@ -51,123 +51,7 @@ print("LOADING FILE:", os.path.abspath(__file__))
 
 ### FUNCTIONS
 
-## Plotting etc.
-def plot_fisher_contours(cosmology, fisher_matrix, param_names = None, fiducial_params = None, cov_matrix = None, title="Fisher Forecast Contours"):
-
-    if param_names is None:
-        param_names = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k']
-        
-    n_params = len(param_names)
-
-    # if need be, extract fiducial params
-    if fiducial_params is None:
-        fiducial_params = extract_param_dict(cosmology)
-        
-    # if need be, invert Fisher Matrix to get the parameter covariance matrix
-    if cov_matrix is None:
-        cov_matrix = np.linalg.inv(fisher_matrix)
-    
-    # setup subplots (Triangle plot grid)
-    fig, axes = plt.subplots(n_params, n_params, figsize=(2.5 * n_params, 2.5 * n_params))
-    if n_params == 1:
-        axes = np.array([[axes]])
-        
-    fig.suptitle(title, fontsize=14, y=1.02)
-    
-    # Standard scale factors for 2D Gaussian Ellipses 
-    # (Delta chi-squared thresholds for 1-sigma and 2-sigma in 2 dimensions)
-    scale_68 = np.sqrt(2.30)
-    scale_95 = np.sqrt(6.18)
-    
-    for i in range(n_params):
-        p_i = param_names[i]
-        val_i = fiducial_params[p_i]
-        sigma_i = np.sqrt(cov_matrix[i, i])
-        
-        for j in range(n_params):
-            p_j = param_names[j]
-            val_j = fiducial_params[p_j]
-            ax = axes[i, j]
-            
-            # Hide the upper triangle of the grid
-            if j > i:
-                ax.axis('off')
-                continue
-                
-            # --- Diagonal Elements: Plot 1D Gaussian Marginal Distributions ---
-            if i == j:
-                x = np.linspace(val_i - 4 * sigma_i, val_i + 4 * sigma_i, 200)
-                y = (1.0 / (sigma_i * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - val_i) / sigma_i) ** 2)
-                
-                ax.plot(x, y, color='firebrick', lw=2)
-                ax.axvline(val_i, color='black', linestyle='--', alpha=0.6)
-                ax.set_xlim(x[0], x[-1])
-                ax.set_yticklabels([])
-                ax.set_yticks([])
-                
-                if i == n_params - 1:
-                    ax.set_xlabel(p_i, fontsize=12)
-                else:
-                    ax.set_xticklabels([])
-                    
-            # --- Off-Diagonal Elements: Plot 2D Joint Contour Ellipses ---
-            else:
-                # Extract the 2x2 sub-covariance matrix for parameters (j, i)
-                # Note: rows index 'i' (y-axis) and columns index 'j' (x-axis)
-                sub_cov = cov_matrix[np.ix_([j, i], [j, i])]
-                
-                # Compute eigenvalues and eigenvectors to find the ellipse principal axes
-                evals, evecs = np.linalg.eigh(sub_cov)
-                
-                # Sort eigenvalues descending
-                order = evals.argsort()[::-1]
-                evals, evecs = evals[order], evecs[:, order]
-                
-                # Calculate the rotation angle of the ellipse relative to the x-axis
-                angle = np.degrees(np.arctan2(evecs[1, 0], evecs[0, 0]))
-                
-                # Width and height are determined by the eigenvalues (variance along principal components)
-                width_68 = 2 * scale_68 * np.sqrt(evals[0])
-                height_68 = 2 * scale_68 * np.sqrt(evals[1])
-                
-                width_95 = 2 * scale_95 * np.sqrt(evals[0])
-                height_95 = 2 * scale_95 * np.sqrt(evals[1])
-                
-                # Draw 95% Contour
-                ellipse_95 = Ellipse(xy=(val_j, val_i), width=width_95, height=height_95, 
-                                     angle=angle, facecolor='firebrick', alpha=0.3, edgecolor='firebrick', lw=1)
-                ax.add_patch(ellipse_95)
-                
-                # Draw 68% Contour
-                ellipse_68 = Ellipse(xy=(val_j, val_i), width=width_68, height=height_68, 
-                                     angle=angle, facecolor='firebrick', alpha=0.6, edgecolor='firebrick', lw=1.5)
-                ax.add_patch(ellipse_68)
-                
-                # Plot the central fiducial truth coordinates
-                ax.plot(val_j, val_i, marker='x', color='black', markersize=6)
-                
-                # Dynamic axis limits based on uncertainties
-                sigma_j = np.sqrt(cov_matrix[j, j])
-                ax.set_xlim(val_j - 3.5 * sigma_j, val_j + 3.5 * sigma_j)
-                ax.set_ylim(val_i - 3.5 * sigma_i, val_i + 3.5 * sigma_i)
-                
-                # Format axis labels for a clean grid layout
-                if i == n_params - 1:
-                    ax.set_xlabel(p_j, fontsize=12)
-                else:
-                    ax.set_xticklabels([])
-                    
-                if j == 0:
-                    ax.set_ylabel(p_i, fontsize=12)
-                else:
-                    ax.set_yticklabels([])
-                    
-    plt.tight_layout()
-    plt.show()
-    
-    fig = plt.gcf() # gcf = "Get Current Figure"
-    return fig
-    
+## Plotting etc.    
 def _find_key_recursive(data, target_key):
     """Recursively searches for a key in a nested dictionary/list structure."""
     if isinstance(data, dict):
@@ -959,7 +843,7 @@ def build_covariance_from_data(
     if desired_spectra is None:
         return full_cov, full_spectra_dict, full_f_map
     else:
-        print("Slicing...")
+        #print("Slicing...")
         sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
         sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
         # Loop over full_spectra_dict to preserve its original, chronological block order
@@ -1074,371 +958,7 @@ def extract_param_dict(cosmology):
     }
     
     return fiducial_params
-    
-# build data vector for desired_spectra using your custom dataset arguments
-def build_theory_vector(cosmology, lens_data, source_data, f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, 
-                      shape_noise_source = None, cmb_noise_phi = None, magnification_bias_lenses = None, desired_spectra = None, 
-                      linear_emulator = None, boost_emulator = None):
-    
-
-    print("Computing theory vector.")
-    
-    cosmology.compute_growth()
-            
-    ells = np.arange(2, n_ell + 2)
-
-    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell)
-
-    # build spectra
-    lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmology, lens_data, source_data, magnification_bias_lenses)
-    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
-    full_spectra_dict = build_spectra_dict(cosmology, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
-
-    if desired_spectra is not None: 
-        sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
-        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
-        sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
-        final_f_map = sliced_f_map
-        final_spectra_dict = sliced_spectra_dict
-    else:
-        final_f_map = full_f_map
-        final_spectra_dict = full_spectra_dict
         
-    # extract and flatten the model data vector
-    model_data_vector = np.array([])
-    num_binned_ells = int(np.ceil(n_ell / binsize))
-    
-    for pair in final_f_map.pairs:
-        unbinned_cls = final_spectra_dict[pair]
-        binned_cls_for_pair = []
-        for i in range(0, n_ell, binsize):
-            end_idx = min(i + binsize, len(unbinned_cls))
-            if i < end_idx:
-                binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-            else:
-                binned_cls_for_pair.append(0.0)
-        while len(binned_cls_for_pair) < num_binned_ells:
-            binned_cls_for_pair.append(0.0)
-        model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-
-    return np.array(model_data_vector)
-
-# compute the derivatives needed for the fisher matrix 
-# default to copmuting all derivatives
-# -- this is what I would do if I wanted to compute all the derivatives first, and then call the Fisher matrix multiple separate times
-#### I've got to figure out what exactly is being varied here -- when I change just Omega_b, by virtue of the way Omega_c is calculated, Omega_c changes as well
-#### pyccl expects Omega_c, but I'm mostly varying Omega_m and Omega_b...
-#### I think I want to keep Omega_m const when Omega_b changes, so that I'm isolating derivatives of Omega_m and Omega_b, the params I constrain
-#### If I switch to constraining Omega_c and Omega_b, then I'll need to change things
-def get_derivatives(fiducial_params, covariance_matrix, data_vector, lens_data, source_data, desired_params = None, step_dict = None, 
-                       f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, shape_noise_source = None, cmb_noise_phi = None, 
-                       magnification_bias_lenses = None, desired_spectra = None, linear_emulator = None, boost_emulator = None):
-
-    print("Getting derivatives.")
-    
-    C_derivatives = {}
-    mu_derivatives = {}
-    
-    # if desired_params is not provided, default to computing everything
-    if desired_params is None:
-        desired_params = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k']
-
-    if step_dict is None:
-        step_dict = {'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 'Omega_k': 1e-3}
-    
-    # loop only over the parameters needed for this Fisher execution
-    for param in desired_params:
-        
-        step = step_dict.get(param, 1e-3)
-        
-        # create parameter steps
-        params_up = fiducial_params.copy()
-        params_down = fiducial_params.copy()
-        params_up[param] += step
-        params_down[param] -= step
-        
-        # rebuild cosmologies once per parameter
-        cosmology_up = ccl.Cosmology(
-            Omega_c = params_up['Omega_m'] - params_up['Omega_b'],
-            Omega_b = params_up['Omega_b'],
-            h       = params_up['h'],
-            A_s     = params_up['A_s'],
-            n_s     = params_up['n_s'],
-            w0      = params_up['w0'],
-            wa      = params_up['wa'],
-            Omega_k = params_up['Omega_k'],
-            transfer_function = 'boltzmann_camb'
-        )
-        
-        cosmology_down = ccl.Cosmology(
-            Omega_c = params_down['Omega_m'] - params_down['Omega_b'],
-            Omega_b = params_down['Omega_b'],
-            h       = params_down['h'],
-            A_s     = params_down['A_s'],
-            n_s     = params_down['n_s'],
-            w0      = params_down['w0'],
-            wa      = params_down['wa'],
-            Omega_k = params_down['Omega_k'],
-            transfer_function = 'boltzmann_camb'
-        )
-        
-        cosmology_up.compute_growth()
-        cosmology_down.compute_growth()
-
-        # compute vector derivative
-        mu_up = build_theory_vector(cosmology_up, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize, 
-                                  shot_noise_lens=shot_noise_lens, shape_noise_source=shape_noise_source, cmb_noise_phi=cmb_noise_phi, 
-                                  magnification_bias_lenses=magnification_bias_lenses, desired_spectra=desired_spectra, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
-        mu_down = build_theory_vector(cosmology_down, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize, 
-                                    shot_noise_lens=shot_noise_lens, shape_noise_source=shape_noise_source, cmb_noise_phi=cmb_noise_phi, 
-                                    magnification_bias_lenses=magnification_bias_lenses, desired_spectra=desired_spectra, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
-        
-        mu_derivatives[param] = (mu_up - mu_down) / (2.0 * step)
-
-        # compute covariance matrix derivative
-        cov_obj_up, _, _ = build_covariance_from_data(
-            cosmology_up, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize,
-            shot_noise_lens=shot_noise_lens, shape_noise_source=shape_noise_source, cmb_noise_phi=cmb_noise_phi, 
-            magnification_bias_lenses=magnification_bias_lenses, desired_spectra=desired_spectra, linear_emulator=linear_emulator, boost_emulator=boost_emulator
-        )
-        
-        cov_obj_down, _, _ = build_covariance_from_data(
-            cosmology_down, lens_data=lens_data, source_data=source_data, f_sky=f_sky, n_ell=n_ell, binsize=binsize,
-            shot_noise_lens=shot_noise_lens, shape_noise_source=shape_noise_source, cmb_noise_phi=cmb_noise_phi, 
-            magnification_bias_lenses=magnification_bias_lenses, desired_spectra=desired_spectra, linear_emulator=linear_emulator, boost_emulator=boost_emulator
-        )
-
-        C_derivatives[param] = (cov_obj_up.matrix - cov_obj_down.matrix) / (2.0 * step)
-        
-    return C_derivatives, mu_derivatives
-    
-# build fisher matrix and covariance matrix
-# make sure that if a covariance matrix and a data vector etc. are passed, that all things have the same desired_spectra
-def make_fisher_matrix(cosmology, lens_data, source_data, C = None, mu = None, C_derivatives = None, mu_derivatives = None, desired_params = None, 
-                       step_dict = None, f_sky = 0.4, n_ell = 5000, binsize = 50, shot_noise_lens = None, shape_noise_source = None, cmb_noise_phi = None, 
-                       magnification_bias_lenses = None, desired_spectra = None, linear_emulator = None, boost_emulator = None):
-
-    # build param dict
-    fiducial_params = extract_param_dict(cosmology)
-    
-    # make covariance matrix if none has been provided
-    if C is None:
-        
-        cov_obj, fiducial_spectra_dict, f_map = \
-        build_covariance_from_data(
-            cosmology,
-            lens_data = lens_data,
-            source_data = source_data,
-            f_sky=f_sky,
-            n_ell=n_ell,
-            binsize=binsize,
-            shot_noise_lens = shot_noise_lens,
-            shape_noise_source=shape_noise_source,
-            cmb_noise_phi=cmb_noise_phi, 
-            magnification_bias_lenses=magnification_bias_lenses,
-            desired_spectra=desired_spectra,
-            linear_emulator=linear_emulator,
-            boost_emulator=boost_emulator
-        )
-
-        C = cov_obj.matrix
-        
-    # make data vector if none has been provided
-    if mu is None:
-        
-        mu = build_theory_vector(cosmology, lens_data = lens_data, source_data = source_data, f_sky = f_sky, n_ell = n_ell, binsize = binsize, 
-                              shot_noise_lens = shot_noise_lens, shape_noise_source = shape_noise_source, cmb_noise_phi = cmb_noise_phi, 
-                              magnification_bias_lenses = magnification_bias_lenses, desired_spectra = desired_spectra, linear_emulator = linear_emulator, boost_emulator = boost_emulator)
-
-    # get derivatives, if they are not provided
-    if C_derivatives is None or mu_derivatives is None:
-        
-        C_derivatives, mu_derivatives = get_derivatives(fiducial_params, C, mu, lens_data = lens_data, source_data = source_data, desired_params = desired_params, 
-                                                        step_dict = step_dict, f_sky = f_sky, n_ell = n_ell, binsize = binsize, shot_noise_lens = shot_noise_lens, 
-                                                        shape_noise_source = shape_noise_source, cmb_noise_phi = cmb_noise_phi, magnification_bias_lenses = magnification_bias_lenses, 
-                                                        desired_spectra = desired_spectra, linear_emulator = linear_emulator, boost_emulator = boost_emulator)
-
-    # default to full matrix
-    if desired_params is None:
-        desired_params = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k']
-        
-    # initialize the Fisher Matrix with the correct dimensions
-    n_params = len(desired_params)
-    F = np.zeros((n_params, n_params))
-    
-    # compute the inverse of the data covariance matrix
-    inv_C = np.linalg.inv(C)
-    
-    # loop through the desired parameters by index to build the matrix
-    for i, p_i in enumerate(desired_params):
-        for j, p_j in enumerate(desired_params):
-            
-            dC_di = C_derivatives[p_i]
-            dC_dj = C_derivatives[p_j]
-            
-            # Coerce 1D arrays into 2D column vectors (Shape: N x 1)
-            #### CHECK THIS
-            dmu_di = mu_derivatives[p_i][:, np.newaxis]
-            dmu_dj = mu_derivatives[p_j][:, np.newaxis]
-
-            # compute
-            matrix1 = inv_C @ dC_di @ inv_C @ dC_dj
-            matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
-            F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
-        
-    # invert the Fisher matrix to get the parameter covariance matrix
-    cov = np.linalg.inv(F)   
-    
-    # print uncertainties
-    print("")
-    print("Fisher Forecast Marginalized Uncertainties")
-    for i, p_name in enumerate(desired_params):
-        sigma = np.sqrt(cov[i, i])
-        # Using scientific notation formats like 1.23e-04 for clean alignment
-        print(f"The uncertainty on {p_name} is approximately {sigma:.6e}")
-    
-    # return Fisher and covariance matrix
-    return F, cov
-
-# old fisher forecast function -- doesn't consider changes in cov
-def generate_fisher_forecast(fiducial_cosmology, lens_data, source_data, shape_noise_source, shot_noise_lens, cmb_noise_phi, cov_path, params_to_sample, 
-                             n_ell=5000, binsize=50, magnification_bias_lenses = 0.8, desired_spectra = None, linear_emulator = None, 
-                             boost_emulator = None, steps_dict=None, plot = False):
-    
-    # extract covariance matrix from cov_path
-    cov_matrix = np.load(cov_path)
-    inv_cov = np.linalg.inv(cov_matrix)
-    cov_dim = cov_matrix.shape[0]
-    
-    # get fiducial parameters from cosmology
-    fiducial_params = {
-        'Omega_c': fiducial_cosmology['Omega_c'],
-        'Omega_b': fiducial_cosmology['Omega_b'],
-        'h': fiducial_cosmology['h'],
-        'n_s': fiducial_cosmology['n_s'],
-        'w0': fiducial_cosmology['w0'],
-        'wa': fiducial_cosmology['wa'],
-        'Omega_k': fiducial_cosmology['Omega_k'],
-        'A_s': fiducial_cosmology['A_s']
-    }
-    fiducial_om = fiducial_params['Omega_c'] + fiducial_params['Omega_b']
-    
-    if steps_dict is None:
-        steps_dict = {
-            'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 
-            'w0': 1e-3, 'wa': 1e-3, 'n_s': 1e-3, 'Omega_b': 1e-4
-        }
-
-    # build data vector for desired_spectra using your custom dataset arguments
-    def build_theory_vector(current_params):
-        p = {**fiducial_params, **current_params}
-        
-        if 'Omega_m' in current_params:
-            Omega_c_val = current_params['Omega_m'] - p['Omega_b']
-        else:
-            Omega_c_val = p['Omega_c']
-            
-        cosmo = ccl.Cosmology(
-            Omega_c=Omega_c_val, Omega_b=p['Omega_b'], h=p['h'],
-            A_s=p['A_s'], n_s=p['n_s'], w0=p['w0'], wa=p['wa'], 
-            Omega_k=p['Omega_k'], transfer_function='boltzmann_camb'
-        )
-        cosmo.compute_growth()
-                
-        ells = np.arange(2, n_ell + 2)
-
-        full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell)
-   
-        # build spectra
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_phi)
-        full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
-
-        if desired_spectra != None: 
-            sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
-            sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
-            sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
-            final_f_map = sliced_f_map
-            final_spectra_dict = sliced_spectra_dict
-        else:
-            final_f_map = full_f_map
-            final_spectra_dict = full_spectra_dict
-            
-        # extract and flatten the model data vector
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(n_ell / binsize))
-        
-        for pair in final_f_map.pairs:
-            unbinned_cls = final_spectra_dict[pair]
-            binned_cls_for_pair = []
-            for i in range(0, n_ell, binsize):
-                end_idx = min(i + binsize, len(unbinned_cls))
-                if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                else:
-                    binned_cls_for_pair.append(0.0)
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-
-        return np.array(model_data_vector)
-
-    # compute fisher matrix using finite differences
-    jacobian_columns = []
-    for param in params_to_sample:
-
-        # get step size -- default to 1e-4
-        eps = steps_dict.get(param, 1e-4)
-        
-        if param == 'Omega_m':
-            current_fid_val = fiducial_params['Omega_c'] + fiducial_params['Omega_b']
-        else:
-            current_fid_val = fiducial_params[param]
-            
-        M_plus = build_theory_vector({param: current_fid_val + eps})
-        M_minus = build_theory_vector({param: current_fid_val - eps})
-        
-        deriv = (M_plus - M_minus) / (2 * eps)
-        jacobian_columns.append(deriv)
-        
-    Jacobian = np.column_stack(jacobian_columns)
-    
-    if Jacobian.shape[0] != cov_dim:
-        raise ValueError(f"Vector-Covariance Mismatch! Generated vector length is {Jacobian.shape[0]}, "
-                         f"but the loaded matrix expects {cov_dim}.")
-
-    # build matrices
-    fisher_matrix = np.dot(Jacobian.T, np.dot(inv_cov, Jacobian))
-    covariance_matrix = np.linalg.inv(fisher_matrix)
-
-    # print analytical constraints
-    print("Fisher Forecast Analytical Results")
-    for idx, param in enumerate(params_to_sample):
-        fid_val = fiducial_om if param == 'Omega_m' else fiducial_params[param]
-        sigma = np.sqrt(covariance_matrix[idx, idx])
-        print(f"  {param:<10} : Fiducial = {fid_val:<10.5e} | 1-Sigma Error = {sigma:.5e}")
-
-    # plot (maybe)
-    if plot:   
-        mean_values = [fiducial_om if p == 'Omega_m' else fiducial_params[p] for p in params_to_sample]
-        param_labels = [p.replace('_', r'\_') for p in params_to_sample]
-        
-        # Initialize the GetDist analytical distribution
-        fisher_gaussian = GaussianND(mean_values, covariance_matrix, names=params_to_sample, labels=param_labels)
-        
-        g = plots.get_subplot_plotter(subplot_size=3.5)
-        g.settings.num_plot_contours = 2
-        
-        # If 1 parameter, g.triangle_plot automatically renders a clean 1D line plot!
-        # If 2+ parameters, it automatically renders the multi-D triangle contour layout.
-        g.triangle_plot(fisher_gaussian, params=params_to_sample, filled=True, colors=['firebrick'])
-        plt.show()
-
-    # return matrices
-    return fisher_matrix, covariance_matrix
-    
 def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
     if z_arr is None:
         a_grid = np.linspace(1/(1+5), 1.0, 20)
@@ -1824,233 +1344,6 @@ def jax_compute_loglike(model_cl, observed_data, inv_covariance):
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ## LIKELIHOODS (these are also classes)
-
-# make SO DESI Likelihood class
-class SO_x_DESI_Likelihood_A_s_version(Likelihood):
-
-    params = {
-        "Omega_m": None, # matter density
-        #"sigma8": None,  # amplitude of matter fluctuations
-        "A_s": None,      # amplitude of primordial fluctuations
-        "h": None,       # Hubble parameter
-        "Omega_b": None, # baryon density
-        "n_s": None,     # primordial tilt
-        "w0": None,      # dark energy equation of state parameter
-        "wa": None,      # dark energy equation of state parameter evolution
-        "Omega_k": None, # curvature density (for curved LCDM) - will set to 0 for flat_LCDM
-    }
-
-    # data-related settings, to be defined when configuring Cobaya
-    data_specs: dict
-
-    # initialize the likelihood
-    # set up fiducial cosmology, calculate fiducial data vector and covariance matrix
-    def initialize(self):
-        print("Initializing SO_x_DESI_Likelihood...")
-
-        # extract necessary data specifications from the Cobaya input YAML/dictionary
-        # these parameters are passed via the 'data_specs' key in the Cobaya configuration.
-        self.f_sky = self.data_specs.get('f_sky', 0.4) # default to 0.4 if not provided
-        self.n_ell = self.data_specs.get('n_ell', 3000) # max unbinned ell
-        self.binsize = self.data_specs.get('binsize', 50) # binning size for ell
-        self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses', 0.8)
-        self.desired_spectra = self.data_specs.get('desired_spectra', ['GG', 'LL', 'GL', 'CC', 'CL', 'CG'])
-
-        # noise parameters, also sourced from data_specs, with default 'None'
-        self.shot_noise_lens = self.data_specs.get('shot_noise_lens', None)
-        self.shape_noise_source = self.data_specs.get('shape_noise_source', None)
-        self.cmb_noise_phi = self.data_specs.get('cmb_noise_phi', None)
-
-        # retrieve lens and source data arrays dynamically.
-        # these are expected to be available as global variables in the notebook
-        # and their names are passed via data_specs
-        self.lens_data = np.load(self.data_specs['lens_data_path'])
-        self.source_data = np.load(self.data_specs['source_data_path'])
-
-        print(f"  Loaded lens data from {self.data_specs['lens_data_path']}")
-        print(f"  Loaded source data from: {self.data_specs['source_data_path']}")
-
-        # New: Check for pre-computed data vector and covariance matrix paths
-        self.data_vector_path = self.data_specs.get('data_vector_path')
-        self.covariance_path = self.data_specs.get('covariance_path')
-
-        if self.data_vector_path and self.covariance_path:
-            print(f"  Loading observed data vector from: {self.data_vector_path}")
-            self.observed_data_vector = np.load(self.data_vector_path)
-            print(f"  Loading covariance matrix from: {self.covariance_path}")
-            self.covariance_matrix = np.load(self.covariance_path)
-
-            # Reconstruct f_map as it's still needed for model vector generation
-            # This assumes that the binsize, n_ell, n_lens, n_src, and desired_spectra used to save
-            # the data vector and covariance are consistent with the current data_specs.
-            num_lens_bins = self.lens_data.shape[1] - 1
-            num_source_bins = self.source_data.shape[1] - 1
-            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins,
-                                     n_ell=self.n_ell, desired_pairs=create_simplified_desired_pairs(num_lens_bins, num_source_bins, self.desired_spectra))
-
-            # Verify compatibility (optional but good practice)
-            num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-            expected_data_len = len(self.f_map.pairs) * num_binned_ells
-            if len(self.observed_data_vector) != expected_data_len:
-                raise ValueError(f"Loaded data vector length ({len(self.observed_data_vector)}) does not match expected length ({expected_data_len}) based on f_map and binsize.")
-            if self.covariance_matrix.shape != (expected_data_len, expected_data_len):
-                raise ValueError(f"Loaded covariance matrix shape ({self.covariance_matrix.shape}) does not match expected shape ({(expected_data_len, expected_data_len)}) based on f_map and binsize.")
-
-        else:
-            # Existing logic to compute fiducial data and covariance if not pre-computed
-            print("  No pre-computed data/covariance paths provided. Computing fiducial data and covariance...")
-            fiducial_cosmo_input = self.data_specs.get('fiducial_cosmology_params', {})
-
-            _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
-            _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
-            _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            #_sigma8 = fiducial_cosmo_input.get('sigma8', flat_LCDM_cosmology.cosmo['sigma8'])
-            _A_s = fiducial_cosmo_input.get('A_s', flat_LCDM_cosmology.cosmo['A_s'])
-            _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
-            _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
-            _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
-            _Omega_k = fiducial_cosmo_input.get('Omega_k', flat_LCDM_cosmology.cosmo['Omega_k'])
-
-            self.fiducial_cosmology = ccl.Cosmology(
-                Omega_c=_Omega_c,
-                Omega_b=_Omega_b,
-                h=_h,
-                #sigma8=_sigma8,
-                A_s = _A_s,
-                n_s=_n_s,
-                w0=_w0,
-                wa=_wa,
-                Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
-            )
-            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
-
-            self.fiducial_cosmology.compute_growth()
-            
-            # build the fiducial data vector (Cls) and covariance matrix
-            self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
-                build_covariance_from_data(
-                    self.fiducial_cosmology,
-                    self.lens_data,
-                    self.source_data,
-                    f_sky=self.f_sky,
-                    n_ell=self.n_ell,
-                    binsize=self.binsize,
-                    shot_noise_lens=self.shot_noise_lens,
-                    shape_noise_source=self.shape_noise_source,
-                    cmb_noise_phi=self.cmb_noise_phi,
-                    magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra, 
-                    linear_emulator = None,
-                    boost_emulator = None
-                )
-            self.covariance_matrix = self.cov_obj.matrix # Store the full matrix
-
-            # flatten the fiducial Cls into a data vector 'D'
-            self.observed_data_vector = np.array([])
-            # note: ells_binned will be used for indexing the covariance matrix and observed data vector
-            # however, the length for the loop should correspond to the expected number of bins.
-            num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-            for pair in self.f_map.pairs:
-                # need to get the binned Cls
-                # for the fiducial 'observed' data, we take the mean of unbinned Cls within each bin
-                unbinned_cls = self.fiducial_spectra_dict[pair]
-                binned_cls_for_pair = []
-                for i in range(0, self.n_ell, self.binsize):
-                    # ensure we don't go out of bounds for the unbinned_cls array
-                    end_idx = min(i + self.binsize, len(unbinned_cls))
-                    if i < end_idx:
-                        binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                    else:
-                        # if a bin is empty (e.g., at the very end of ells if self.n_ell is not a multiple of binsize)
-                        binned_cls_for_pair.append(0.0)
-
-                # make sure the number of binned Cls matches the expected num_binned_ells
-                while len(binned_cls_for_pair) < num_binned_ells:
-                    binned_cls_for_pair.append(0.0) # pad with zeros or appropriate value
-
-                self.observed_data_vector = np.concatenate((self.observed_data_vector, binned_cls_for_pair))
-
-        # get the inverse covariance matrix and its log-determinant
-        self.inv_covariance = np.linalg.inv(self.covariance_matrix)
-        self.log_det_covariance = np.linalg.slogdet(self.covariance_matrix)[1]
-        print("SO_x_DESI_Likelihood initialized successfully.")
-
-    # get dictionary of required likelihood params
-    def get_requirements(self):
-        return {}
-
-    def logp(self, **kwargs):
-        # Cobaya passes parameters as keyword arguments. `ccl_data` contains the ccl.Cosmology object.
-        #ccl_data = kwargs['CCL']
-        #current_cosmology = ccl_data.get_cosmology()
-
-        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
-        #Omega_m = kwargs['Omega_m']
-        Omega_b = kwargs['Omega_b']
-        h = kwargs['h']
-        A_s = kwargs['A_s']
-        n_s = kwargs['n_s']
-        w0 = kwargs['w0']
-        wa = kwargs['wa']
-        Omega_k = kwargs['Omega_k']
-        
-        Omega_c = Omega_m - Omega_b
-
-        if Omega_m < 0.1 or Omega_m > 0.6:
-            print("omega_m outside of bounds")
-    
-        current_cosmology = ccl.Cosmology(
-            Omega_c=Omega_c,
-            Omega_b=Omega_b,
-            h=h,
-            A_s=A_s,
-            n_s=n_s,
-            w0=w0,
-            wa=wa,
-            Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
-        )
-
-        current_cosmology.compute_growth()
-        
-        # calculate the theoretical model data vector M(theta) for the current cosmology
-        ells = np.arange(2, self.n_ell + 2) # unbinned ells
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
-            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=None, boost_emulator=None)
-
-        # flatten the current Cls into a model data vector 'M'
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-        for pair in self.f_map.pairs:
-            unbinned_cls = current_spectra_dict[pair]
-            binned_cls_for_pair = []
-            for i in range(0, self.n_ell, self.binsize):
-                end_idx = min(i + self.binsize, len(unbinned_cls))
-                if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                else:
-                    binned_cls_for_pair.append(0.0)
-
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-
-        # calculate the difference vector (D - M(theta))
-        difference_vector = self.observed_data_vector - model_data_vector
-
-        # calculate the log-likelihood
-        # ln L = -1/2 * (D - M)^T * C^-1 * (D - M) - 1/2 * ln|C|
-        chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
-        log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
-
-        return log_likelihood
 
 # make SO DESI Likelihood class w/emulator
 # the emulator needs to be used for the covariance matrix and data vector too, to ensure self-consistency
@@ -2687,247 +1980,6 @@ class SO_x_DESI_Likelihood_w_emulator_and_JAX(Likelihood):
         return chi2
         
 # make SO DESI Likelihood class
-class SO_x_DESI_Likelihood_sigma8_version(Likelihood):
-
-    params = {
-        "Omega_m": None, # matter density
-        "sigma8": None,  # amplitude of matter fluctuations
-        "h": None,       # Hubble parameter
-        "Omega_b": None, # baryon density
-        "n_s": None,     # primordial tilt
-        "w0": None,      # dark energy equation of state parameter
-        "wa": None,      # dark energy equation of state parameter evolution
-        "Omega_k": None, # curvature density (for curved LCDM) - will set to 0 for flat_LCDM
-    }
-
-    # data-related settings, to be defined when configuring Cobaya
-    data_specs: dict
-
-    # initialize the likelihood
-    # set up fiducial cosmology, calculate fiducial data vector and covariance matrix
-    def initialize(self):
-        print("Initializing SO_x_DESI_Likelihood...")
-
-        # extract necessary data specifications from the Cobaya input YAML/dictionary
-        # these parameters are passed via the 'data_specs' key in the Cobaya configuration.
-        self.f_sky = self.data_specs.get('f_sky', 0.4) # default to 0.4 if not provided
-        self.n_ell = self.data_specs.get('n_ell', 3000) # max unbinned ell
-        self.binsize = self.data_specs.get('binsize', 50) # binning size for ell
-        self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses', 0.8)
-        self.desired_spectra = self.data_specs.get('desired_spectra', ['GG', 'LL', 'GL', 'CC', 'CL', 'CG'])
-
-        # noise parameters, loaded from files, with default 'None'
-        shot_noise_path = self.data_specs.get('shot_noise_path')
-        if shot_noise_path:
-            print(f"  Loading lens shot noise from: {shot_noise_path}")
-            self.shot_noise_lens = np.load(shot_noise_path)
-        else:
-            self.shot_noise_lens = None
-
-        shape_noise_path = self.data_specs.get('shape_noise_path')
-        if shape_noise_path:
-            print(f"  Loading source shape noise from: {shape_noise_path}")
-            self.shape_noise_source = np.load(shape_noise_path)
-        else:
-            self.shape_noise_source = None
-
-        cmb_noise_path = self.data_specs.get('cmb_noise_phi_path')
-        if cmb_noise_path:
-            print(f"  Loading CMB noise from: {cmb_noise_path}")
-            self.cmb_noise_phi = np.load(cmb_noise_path)
-        else:
-            self.cmb_noise_phi = None
-
-        # retrieve lens and source data arrays dynamically.
-        # these are expected to be available as global variables in the notebook
-        # and their names are passed via data_specs
-        self.lens_data = np.load(self.data_specs['lens_data_path'])
-        self.source_data = np.load(self.data_specs['source_data_path'])
-
-        print(f"  Loaded lens data from {self.data_specs['lens_data_path']}")
-        print(f"  Loaded source data from: {self.data_specs['source_data_path']}")
-
-        # New: Check for pre-computed data vector and covariance matrix paths
-        self.data_vector_path = self.data_specs.get('data_vector_path')
-        self.covariance_path = self.data_specs.get('covariance_path')
-
-        if self.data_vector_path and self.covariance_path:
-            print(f"  Loading observed data vector from: {self.data_vector_path}")
-            self.observed_data_vector = np.load(self.data_vector_path)
-            print(f"  Loading covariance matrix from: {self.covariance_path}")
-            self.covariance_matrix = np.load(self.covariance_path)
-
-            # Reconstruct f_map as it's still needed for model vector generation
-            # This assumes that the binsize, n_ell, n_lens, n_src, and desired_spectra used to save
-            # the data vector and covariance are consistent with the current data_specs.
-            num_lens_bins = self.lens_data.shape[1] - 1
-            num_source_bins = self.source_data.shape[1] - 1
-            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins,
-                                     n_ell=self.n_ell, desired_pairs=create_simplified_desired_pairs(num_lens_bins, num_source_bins, self.desired_spectra))
-
-            # Verify compatibility (optional but good practice)
-            num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-            expected_data_len = len(self.f_map.pairs) * num_binned_ells
-            if len(self.observed_data_vector) != expected_data_len:
-                raise ValueError(f"Loaded data vector length ({len(self.observed_data_vector)}) does not match expected length ({expected_data_len}) based on f_map and binsize.")
-            if self.covariance_matrix.shape != (expected_data_len, expected_data_len):
-                raise ValueError(f"Loaded covariance matrix shape ({self.covariance_matrix.shape}) does not match expected shape ({(expected_data_len, expected_data_len)}) based on f_map and binsize.")
-
-        else:
-            # Existing logic to compute fiducial data and covariance if not pre-computed
-            print("  No pre-computed data/covariance paths provided. Computing fiducial data and covariance...")
-            fiducial_cosmo_input = self.data_specs.get('fiducial_cosmology_params', {})
-
-            _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
-            _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
-            _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            _sigma8 = fiducial_cosmo_input.get('sigma8', flat_LCDM_cosmology.cosmo['sigma8'])
-            _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
-            _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
-            _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
-            _Omega_k = fiducial_cosmo_input.get('Omega_k', flat_LCDM_cosmology.cosmo['Omega_k'])
-
-            self.fiducial_cosmology = ccl.Cosmology(
-                Omega_c=_Omega_c,
-                Omega_b=_Omega_b,
-                h=_h,
-                sigma8=_sigma8,
-                n_s=_n_s,
-                w0=_w0,
-                wa=_wa,
-                Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
-            )
-            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, sigma8={_sigma8}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
-
-            self.fiducial_cosmology.compute_growth()
-            
-            # build the fiducial data vector (Cls) and covariance matrix
-            self.cov_obj, self.fiducial_spectra_dict, self.f_map = \
-                build_covariance_from_data(
-                    self.fiducial_cosmology,
-                    self.lens_data,
-                    self.source_data,
-                    f_sky=self.f_sky,
-                    n_ell=self.n_ell,
-                    binsize=self.binsize,
-                    shot_noise_lens=self.shot_noise_lens,
-                    shape_noise_source=self.shape_noise_source,
-                    cmb_noise_phi=self.cmb_noise_phi,
-                    magnification_bias_lenses=self.magnification_bias_lenses,
-                    desired_spectra=self.desired_spectra, 
-                    linear_emulator = None,
-                    boost_emulator = None
-                )
-            self.covariance_matrix = self.cov_obj.matrix # Store the full matrix
-
-            # flatten the fiducial Cls into a data vector 'D'
-            self.observed_data_vector = np.array([])
-            # note: ells_binned will be used for indexing the covariance matrix and observed data vector
-            # however, the length for the loop should correspond to the expected number of bins.
-            num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-            for pair in self.f_map.pairs:
-                # need to get the binned Cls
-                # for the fiducial 'observed' data, we take the mean of unbinned Cls within each bin
-                unbinned_cls = self.fiducial_spectra_dict[pair]
-                binned_cls_for_pair = []
-                for i in range(0, self.n_ell, self.binsize):
-                    # ensure we don't go out of bounds for the unbinned_cls array
-                    end_idx = min(i + self.binsize, len(unbinned_cls))
-                    if i < end_idx:
-                        binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                    else:
-                        # if a bin is empty (e.g., at the very end of ells if self.n_ell is not a multiple of binsize)
-                        binned_cls_for_pair.append(0.0)
-
-                # make sure the number of binned Cls matches the expected num_binned_ells
-                while len(binned_cls_for_pair) < num_binned_ells:
-                    binned_cls_for_pair.append(0.0) # pad with zeros or appropriate value
-
-                self.observed_data_vector = np.concatenate((self.observed_data_vector, binned_cls_for_pair))
-
-        # get the inverse covariance matrix and its log-determinant
-        self.inv_covariance = np.linalg.inv(self.covariance_matrix)
-        self.log_det_covariance = np.linalg.slogdet(self.covariance_matrix)[1]
-        print("SO_x_DESI_Likelihood initialized successfully.")
-
-    # get dictionary of required likelihood params
-    def get_requirements(self):
-        return {}
-
-    def logp(self, **kwargs):
-        # Cobaya passes parameters as keyword arguments. `ccl_data` contains the ccl.Cosmology object.
-        #ccl_data = kwargs['CCL']
-        #current_cosmology = ccl_data.get_cosmology()
-
-        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
-        #Omega_m = kwargs['Omega_m']
-        Omega_b = kwargs['Omega_b']
-        h = kwargs['h']
-        sigma8 = kwargs['sigma8']
-        n_s = kwargs['n_s']
-        w0 = kwargs['w0']
-        wa = kwargs['wa']
-        Omega_k = kwargs['Omega_k']
-        
-        Omega_c = Omega_m - Omega_b
-
-        if Omega_m < 0.1 or Omega_m > 0.6:
-            print("omega_m outside of bounds")
-    
-        current_cosmology = ccl.Cosmology(
-            Omega_c=Omega_c,
-            Omega_b=Omega_b,
-            h=h,
-            sigma8=sigma8,
-            n_s=n_s,
-            w0=w0,
-            wa=wa,
-            Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
-        )
-
-        current_cosmology.compute_growth()
-        
-        # calculate the theoretical model data vector M(theta) for the current cosmology
-        ells = np.arange(2, self.n_ell + 2) # unbinned ells
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
-            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_phi)
-        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator = None, boost_emulator = None)
-
-        # flatten the current Cls into a model data vector 'M'
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-        for pair in self.f_map.pairs:
-            unbinned_cls = current_spectra_dict[pair]
-            binned_cls_for_pair = []
-            for i in range(0, self.n_ell, self.binsize):
-                end_idx = min(i + self.binsize, len(unbinned_cls))
-                if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                else:
-                    binned_cls_for_pair.append(0.0)
-
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-
-        # calculate the difference vector (D - M(theta))
-        difference_vector = self.observed_data_vector - model_data_vector
-
-        # calculate the log-likelihood
-        # ln L = -1/2 * (D - M)^T * C^-1 * (D - M) - 1/2 * ln|C|
-        chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
-        log_likelihood = -0.5 * chi2 - 0.5 * self.log_det_covariance
-
-        return log_likelihood
-
-# make SO DESI Likelihood class
 class SO_x_DESI_Likelihood_A_s_version(Likelihood):
 
     params = {
@@ -3393,7 +2445,7 @@ class FisherForecaster:
         return C_derivatives, mu_derivatives
 
     # build and invert Fisher matrix without considering priors, since they are uniform, not Gaussian
-    def make_fisher_matrix(self, desired_params=None, C=None, mu=None, C_derivatives=None, mu_derivatives=None):
+    def make_fisher_matrix(self, desired_params=None, C=None, mu=None, C_derivatives=None, mu_derivatives=None, print_summary = False):
         
         # default to full Fisher matrix
         if desired_params is None:
@@ -3432,13 +2484,14 @@ class FisherForecaster:
         self.cov = np.linalg.inv(F)   
         
         # print results in a highly readable format
-        print("")
-        print("Fisher Forecast Results Without Priors")
-        for i, p_name in enumerate(self.desired_params):
-            sigma = np.sqrt(self.cov[i, i])
-            error_str = f"{sigma:.3e}" if sigma < 0.001 else f"{sigma:.4f}"
-            print(f"The uncertainty on {p_name} is {error_str}")
-        print("")
+        if print_summary:
+            print("")
+            print("Fisher Forecast Results Without Priors")
+            for i, p_name in enumerate(self.desired_params):
+                sigma = np.sqrt(self.cov[i, i])
+                error_str = f"{sigma:.3e}" if sigma < 0.001 else f"{sigma:.4f}"
+                print(f"The uncertainty on {p_name} is {error_str}")
+            print("")
         
         return self.F, self.cov
 
@@ -3573,7 +2626,10 @@ class FisherForecaster:
         burn_in_fraction=0.2,
         uniform_priors=None,
         overlay_priorless=False, 
-        num_samples=200000
+        num_samples=200000,
+        save_plot = False,
+        plot_folder = "plots/Fisher Forecasts",
+        print_summary = False
     ):
         from getdist.gaussian_mixtures import GaussianND
 
@@ -3590,7 +2646,8 @@ class FisherForecaster:
         latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0', 'A_s': r'A_s', 'h': r'h'}
         labels = [latex_labels.get(p, p) for p in param_names]
 
-        #### test this -- I'm a little concerned that the slicing might screw things up, but I know it's not nearly as sensitive as the MCMC in this regard
+        #### test this -- I'm a little concerned that the slicing might screw things up, 
+        #### but I know it's not nearly as sensitive as the MCMC in this regard
         # Helper to extract the correct sliced covariance matrix for GetDist
         def get_sliced_cov_and_fiducial():
             fiducial_values = [float(self.fiducial_dict[p]) for p in param_names]
@@ -3682,4 +2739,50 @@ class FisherForecaster:
         )
         
         plt.suptitle(title, y=1.02, fontsize=12)
+
+        if save_plot:
+            # Ensure the directory path exists safely
+            if plot_folder and not os.path.exists(plot_folder):
+                os.makedirs(plot_folder)
+                print(f"Created directory: {plot_folder}")
+            
+            # Format a clean filename from the given title (lowercase, no spaces/punctuation)
+            clean_filename = title.lower().replace(" ", "_").replace(".", "").replace(",", "") + ".pdf"
+            full_save_path = os.path.join(plot_folder, clean_filename)
+            
+            # Check if GetDist plotter 'g' exists in local variables to use its native exporter
+            if 'g' in locals():
+                g.export(full_save_path)
+            else:
+                # Fallback to standard matplotlib if 'g' isn't explicitly defined
+                plt.savefig(full_save_path, bbox_inches='tight', dpi=300)
+                
+            print(f"Plot successfully saved to: {full_save_path}")
+
+        # Quantitative Parameter Comparison (Table Output)
+        if print_summary:
+            print("\n" + "="*80)
+            print("         QUANTITATIVE PARAMETER CONSTRAINTS COMPARISON")
+            print("="*80)
+            
+            for param in param_names:
+                print(f"\nParameter: {param}")
+                print("-" * 80)
+                # Print the Table Header
+                print(f"{'Dataset / Model':<30} | {'1-Sigma (68%)':<22} | {'2-Sigma (95%)':<22}")
+                print("-" * 80)
+                
+                # Loop through whichever datasets were generated and added to the plot
+                for dataset, label in zip(plot_datasets, legend_labels):
+                    try:
+                        # Extract 1-sigma (limit=1) and 2-sigma (limit=2) bounds via GetDist
+                        latex_str_1sig = dataset.getInlineLatex(param, limit=1)
+                        latex_str_2sig = dataset.getInlineLatex(param, limit=2)
+                        
+                        print(f"{label:<30} | {latex_str_1sig:<22} | {latex_str_2sig:<22}")
+                    except Exception as e:
+                        print(f"{label:<30} | Error extracting limits: {e}")
+                print("-" * 80)
+            print("="*80 + "\n")
+
         return g
