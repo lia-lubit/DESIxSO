@@ -34,6 +34,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.patches import Ellipse
 import seaborn as sns
 from mpl_toolkits.mplot3d import Axes3D
+from IPython.display import display, Markdown
 
 # inference / sampling
 import cobaya
@@ -124,7 +125,16 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
 
     combined_samples = np.column_stack([np.concatenate(param_tracks[p]) for p in sampled_params])
     
-    latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0'}
+    latex_labels = {
+        'Omega_m': r'\Omega_\mathrm{m}',
+        'Omega_b': r'\Omega_\mathrm{b}',
+        'Omega_k': r'\Omega_\mathrm{k}',
+        'wa': r'w_a',
+        'w0': r'w_0',
+        'h': r'h',
+        'A_s': r'A_\mathrm{s}',
+        'n_s': r'n_\mathrm{s}'
+    }
     labels = [latex_labels.get(p, p) for p in sampled_params]
 
     samples = MCSamples(
@@ -158,6 +168,11 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         title_suffix = ""
 
     # --- 3. TRIANGLE CONTOUR PLOT ---
+
+    for param_name, latex_string in latex_labels.items():
+        if samples.paramNames.contains(param_name):
+            samples.paramNames.parWithName(param_name).label = latex_string
+        
     g1 = plots.get_subplot_plotter(width_inch=2.5 * len(sampled_params))
     g1.triangle_plot(
         [samples], 
@@ -2391,7 +2406,7 @@ class FisherForecaster:
 
     # manually compute derivatives
     def get_derivatives(self, desired_params):
-        print("Getting derivatives...")
+        #print("Getting derivatives...")
         C_derivatives = {}
         mu_derivatives = {}
         p = self.survey_params
@@ -2584,7 +2599,7 @@ class FisherForecaster:
         fiducial_values = [self.fiducial_dict[p] for p in self.desired_params]
         
         # draw rapid multivariate normal samples based on the Fisher covariance
-        print(f"Generating {num_samples} mock samples from Fisher covariance...")
+        #print(f"Generating {num_samples} mock samples from Fisher covariance...")
         samples = np.random.multivariate_normal(fiducial_values, self.cov, size=num_samples)
         
         # apply uniform prior cuts (mask out samples that exceed boundaries)
@@ -2597,7 +2612,7 @@ class FisherForecaster:
                     mask &= (samples[:, idx] >= p_min) & (samples[:, idx] <= p_max)
             
             samples = samples[mask]
-            print(f"Uniform priors applied. Retained {len(samples)} valid samples.")
+            #print(f"Uniform priors applied. Retained {len(samples)} valid samples.")
             
             if len(samples) == 0:
                 raise ValueError("Zero samples survived the uniform prior cuts. Check if your fiducial values sit outside your prior bounds!")
@@ -2643,7 +2658,15 @@ class FisherForecaster:
         contour_colors = []
 
         # 1. Define clean LaTeX labels up front so all datasets can use them
-        latex_labels = {'Omega_m': r'\Omega_m', 'wa': r'w_a', 'w0': r'w_0', 'A_s': r'A_s', 'h': r'h'}
+        latex_labels = {'Omega_m': r'\Omega_\mathrm{m}',
+                        'Omega_b': r'\Omega_\mathrm{b}',
+                        'Omega_k': r'\Omega_\mathrm{k}',
+                        'wa': r'w_a',
+                        'w0': r'w_0',
+                        'h': r'h',
+                        'A_s': r'A_\mathrm{s}',
+                        'n_s': r'n_\mathrm{s}'
+                    }
         labels = [latex_labels.get(p, p) for p in param_names]
 
         #### test this -- I'm a little concerned that the slicing might screw things up, 
@@ -2687,7 +2710,7 @@ class FisherForecaster:
             all_loglikes = []
             param_tracks = {p: [] for p in sampled_params}
             
-            print(f"Processing {num_chains} Cobaya chains from: {cobaya_chain_dir}")
+            #print(f"Processing {num_chains} Cobaya chains from: {cobaya_chain_dir}")
             for i in range(num_chains):
                 chain_path = os.path.join(cobaya_chain_dir, f"chain_task_{i}.txt")
                 if os.path.exists(chain_path):
@@ -2727,7 +2750,14 @@ class FisherForecaster:
         
         # Extract fiducial values in correct order for markers
         fiducial_vals = {p: float(self.fiducial_dict[p]) for p in param_names if p in self.fiducial_dict}
-        
+
+        # Loop through each dataset and update the parameter labels manually
+        for dataset in plot_datasets:
+            for param_name, latex_string in latex_labels.items():
+                # Get the list of names and check using 'in'
+                if param_name in [p.name for p in dataset.paramNames.names]:
+                    dataset.paramNames.parWithName(param_name).label = latex_string
+            
         g.triangle_plot(
             plot_datasets,
             params=param_names,
@@ -2738,8 +2768,13 @@ class FisherForecaster:
             title_limit=1
         )
         
-        plt.suptitle(title, y=1.02, fontsize=12)
-
+       # Add a beautifully placed global title that stays independent of the plots
+        if g.subplots is not None and g.subplots.size > 0:
+            # figtext uses overall canvas coordinates (0 to 1). 
+            # x=0.15 aligns it beautifully with the left edge of the staggered grid.
+            plt.subplots_adjust(top = 0.85)
+            plt.figtext(0.15, 1, title, fontsize=16, ha='left', va='bottom')
+            
         if save_plot:
             # Ensure the directory path exists safely
             if plot_folder and not os.path.exists(plot_folder):
@@ -2759,30 +2794,102 @@ class FisherForecaster:
                 
             print(f"Plot successfully saved to: {full_save_path}")
 
+        # Force clean math symbols for the table rows across all datasets
+        latex_label_map = {
+            'Omega_m': r'\Omega_m',
+            'A_s': r'A_s',
+            'w0': r'w_0',
+            'wa': r'w_a',
+            'h': r'h',
+            'Omega_b': r'\Omega_b',
+            'n_s': r'n_s',
+            'Omega_k': r'\Omega_k'
+        }
+
         # Quantitative Parameter Comparison (Table Output)
         if print_summary:
-            print("\n" + "="*80)
-            print("         QUANTITATIVE PARAMETER CONSTRAINTS COMPARISON")
-            print("="*80)
+            # Initialize the single master table header
+            md_lines = [
+                "| Parameter | Dataset / Model | 1-Sigma (68%) | 2-Sigma (95%) |",
+                "| :--- | :--- | :---: | :---: |"
+            ]
             
             for param in param_names:
-                print(f"\nParameter: {param}")
-                print("-" * 80)
-                # Print the Table Header
-                print(f"{'Dataset / Model':<30} | {'1-Sigma (68%)':<22} | {'2-Sigma (95%)':<22}")
-                print("-" * 80)
+                display_label = latex_label_map.get(param, param)
+                param_idx = self.desired_params.index(param)
+                fiducial_val = float(self.fiducial_dict[param])
                 
-                # Loop through whichever datasets were generated and added to the plot
-                for dataset, label in zip(plot_datasets, legend_labels):
-                    try:
-                        # Extract 1-sigma (limit=1) and 2-sigma (limit=2) bounds via GetDist
-                        latex_str_1sig = dataset.getInlineLatex(param, limit=1)
-                        latex_str_2sig = dataset.getInlineLatex(param, limit=2)
-                        
-                        print(f"{label:<30} | {latex_str_1sig:<22} | {latex_str_2sig:<22}")
-                    except Exception as e:
-                        print(f"{label:<30} | Error extracting limits: {e}")
-                print("-" * 80)
-            print("="*80 + "\n")
+                # Track the first row for this parameter block to display its name
+                first_row_for_param = True
 
+                # Helper function to dynamically convert any number into a clean LaTeX exponent string
+                def format_value(val, sig):
+                    # Check if either the value or the error falls outside [0.001, 99]
+                    if abs(val) > 99 or abs(sig) > 99 or (0 < abs(val) < 0.001) or (0 < abs(sig) < 0.001):
+                        # Convert to scientific notation (e.g., "2.10e-09" or "8.76e+09")
+                        val_str = f"{val:.2e}"
+                        sig_str = f"{sig:.2e}"
+                        
+                        # Split base and exponent: "2.10e-09" -> "2.10", "-09"
+                        v_base, v_exp = val_str.split('e')
+                        s_base, s_exp = sig_str.split('e')
+                        
+                        # Clean up sign/leading zeros in exponents (e.g., "-09" -> "-9", "+04" -> "4")
+                        v_exp = int(v_exp)
+                        s_exp = int(s_exp)
+                        
+                        # If they share the exact same exponent, group them cleanly like: (2.10 \pm 1.19) \cdot 10^{-9}
+                        if v_exp == s_exp:
+                            return f"({v_base} \\pm {s_base}) \\cdot 10^{{{v_exp}}}"
+                        else:
+                            # If exponents are different, print them individually
+                            return f"{v_base} \\cdot 10^{{{v_exp}}} \\pm {s_base} \\cdot 10^{{{s_exp}}}"
+                    else:
+                        # Fall back to your standard readable decimal format
+                        dec = 4 if sig < 0.01 else 3 
+                        return f"{val:.{dec}f} \\pm {sig:.{dec}f}"
+
+                for dataset, label in zip(plot_datasets, legend_labels):
+                    
+                    # --- CASE 1: Analytical Covariance Matrix for the Prior-less Forecast ---
+                    if label == "Fisher Forecast (No Priors)":
+                        sigma_1 = np.sqrt(self.cov[param_idx, param_idx])
+                                
+                        # Generate strings using our universal formatting rules
+                        val_sig_1 = format_value(fiducial_val, sigma_1)
+                        val_sig_2 = format_value(fiducial_val, 2.0 * sigma_1)
+                        
+                        # Build the final strings making sure the math label is ALWAYS attached
+                        str_1sig = f"${display_label} = {val_sig_1}$"
+                        str_2sig = f"${display_label} = {val_sig_2}$"
+                    
+                    # --- CASE 2: GetDist Objects (Fisher With Priors & Cobaya MCMC Chains) ---
+                    else:
+                        val_1sig = dataset.getInlineLatex(param, limit=1)
+                        val_2sig = dataset.getInlineLatex(param, limit=2)
+                        
+                        # If GetDist included an '=', split it to throw away its broken label (e.g., 'Omegam')
+                        if "=" in val_1sig:
+                            val_1sig = val_1sig.split("=")[-1].strip()
+                        if "=" in val_2sig:
+                            val_2sig = val_2sig.split("=")[-1].strip()
+                        
+                        # Rebuild the string using your beautiful latex_label_map entry
+                        str_1sig = f"${display_label} = {val_1sig}$"
+                        str_2sig = f"${display_label} = {val_2sig}$"
+                            
+                    # FIX: Moved outside the except block so every model gets appended
+                    param_col = f"**${display_label}$**" if first_row_for_param else ""
+                    md_lines.append(f"| {param_col} | {label} | {str_1sig} | {str_2sig} |")
+                    first_row_for_param = False
+                            
+                # Add a visual divider line between parameter blocks
+                md_lines.append("| --- | --- | --- | --- |")
+        
+            # Render the unified master table cleanly in the notebook
+            display(Markdown("\n".join(md_lines)))
+
+            print("")
+            print("")
+            
         return g
