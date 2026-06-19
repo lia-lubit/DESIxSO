@@ -16,6 +16,8 @@ import scipy
 from scipy.interpolate import interp1d
 from scipy.stats import linregress
 from scipy.integrate import simpson
+from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import CubicSpline, interp1d
 
 # cosmology
 import astropy
@@ -678,6 +680,8 @@ def build_tracer_dict(lens_tracers, lensing_tracers, cmb_tracer):
     return tracer_dict
 
 # build noise dictionary
+# shot noise needs to have as many entries as lens bins
+# shape noise needs to have as many entries as source bins
 def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_phi=None):
     noise_dict = {}
 
@@ -839,7 +843,7 @@ def build_covariance_from_data(
     boost_emulator=None
 ):
 
-    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell)
+    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs = None)
 
     # Use the full range of unbinned ells for CCL calculations
     ells = np.arange(2, n_ell + 2)
@@ -2393,8 +2397,7 @@ class FisherForecaster:
         )
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
         noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_phi'])
-        full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, 
-                                               linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'])
+        full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'])
 
         if self.sliced_pairs is not None: 
             final_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in self.sliced_pairs}
