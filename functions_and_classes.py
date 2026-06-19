@@ -2352,15 +2352,15 @@ class FisherForecaster:
         self.ells = np.arange(2, p['n_ell'] + 2)
         self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
         self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'])
-      
-        if p['desired_spectra'] is not None:
-            sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
-            self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs)
-            self.sliced_pairs = sliced_pairs
-        else:
-            self.final_f_map = self.full_f_map
-            self.sliced_pairs = None
 
+        # default to full spectra
+        if p['desired_spectra'] is None: 
+            p['desired_spectra'] = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
+
+        sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
+        self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs)
+        self.sliced_pairs = sliced_pairs
+        
     # get parameter dictionary from a ccl cosmology (I usually pass cosmologies, not dictionaries)
     def _extract_param_dict(self, cosmology):
         h = cosmology['h']
@@ -2398,7 +2398,7 @@ class FisherForecaster:
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
         noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_phi'])
         full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'])
-
+        
         if self.sliced_pairs is not None: 
             final_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in self.sliced_pairs}
         else:
