@@ -1475,7 +1475,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
                 w0=_w0,
                 wa=_wa,
                 Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
+                transfer_function='boltzmann_camb',
+                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
             print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
@@ -1563,7 +1564,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
             w0=w0,
             wa=wa,
             Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
+            transfer_function='boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
         
         current_cosmology.compute_growth()
@@ -1626,7 +1628,8 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
             n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
-            transfer_function='boltzmann_camb'
+            transfer_function='boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
         current_cosmology.compute_growth()
         
@@ -1788,7 +1791,8 @@ class SO_x_DESI_Likelihood_w_emulator_and_JAX(Likelihood):
                 w0=_w0,
                 wa=_wa,
                 Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
+                transfer_function='boltzmann_camb',
+                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
             print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
@@ -1878,7 +1882,8 @@ class SO_x_DESI_Likelihood_w_emulator_and_JAX(Likelihood):
             w0=w0,
             wa=wa,
             Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
+            transfer_function='boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
         
         current_cosmology.compute_growth()
@@ -1945,7 +1950,8 @@ class SO_x_DESI_Likelihood_w_emulator_and_JAX(Likelihood):
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
             n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
-            transfer_function='boltzmann_camb'
+            transfer_function='boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
         current_cosmology.compute_growth()
         
@@ -2104,7 +2110,8 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
                 w0=_w0,
                 wa=_wa,
                 Omega_k=_Omega_k,
-                transfer_function='boltzmann_camb'
+                transfer_function='boltzmann_camb',
+                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
             print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
 
@@ -2193,7 +2200,8 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
             w0=w0,
             wa=wa,
             Omega_k=Omega_k,
-            transfer_function='boltzmann_camb'
+            transfer_function='boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
 
         current_cosmology.compute_growth()
@@ -2256,7 +2264,8 @@ class SO_x_DESI_Likelihood_A_s_version(Likelihood):
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
             n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
-            transfer_function='boltzmann_camb'
+            transfer_function='boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
         current_cosmology.compute_growth()
         
@@ -2431,7 +2440,8 @@ class FisherForecaster:
                 w0      = params_up['w0'],
                 wa      = params_up['wa'],
                 Omega_k = params_up['Omega_k'],
-                transfer_function = 'boltzmann_camb'
+                transfer_function = 'boltzmann_camb',
+                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
             
             cosmology_down = ccl.Cosmology(
@@ -2443,7 +2453,8 @@ class FisherForecaster:
                 w0      = params_down['w0'],
                 wa      = params_down['wa'],
                 Omega_k = params_down['Omega_k'],
-                transfer_function = 'boltzmann_camb'
+                transfer_function = 'boltzmann_camb',
+                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
             
             cosmology_up.compute_growth()
