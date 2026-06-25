@@ -181,7 +181,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         params=sampled_params, 
         filled=True, 
         contour_colors=['darkblue'],
-        title_limit=1,
+        title_limit=None,
         markers=fiducial_vals
     )
 
@@ -240,17 +240,20 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
     plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
     print(f"Saved trace plot to: {trace_save_path}")
     plt.show()
-    
+
 # calcualte and (maybe) plot angular power spectra
 def calculate_and_plot_Cls(
     cosmology,        # ccl.Cosmology object
     source_data,         # 2D array: z, n_z_bin1, n_z_bin2, ...
     lens_data,          # 2D array: z, n_z_bin1, n_z_bin2, ...
-    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG'], # List of correlation types to plot
+    correlation_types=['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'BB', 'TE'], # List of correlation types to plot
     Pk2D_object = None,    # Pk2D object from emulator,
-    plot = 'yes'       # chose whether to plot
+    plot = True,       # chose whether to plot
+    plot_scaled = False, # decide whether to plot Cl or l(l+1)C_l/2pi
+    n_ell = 3000        # assume this value, change if needed
 ):
 
+    ## LENSING SPECTRA
     # extract lens and source redshift grids and distributions
     z_lens_grid = lens_data[:, 0]
     n_lens_dists = [lens_data[:, i] for i in range(1, lens_data.shape[1])]
@@ -279,7 +282,7 @@ def calculate_and_plot_Cls(
     CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
 
     # define common range of multipoles and a dictionary
-    ell_values = np.logspace(np.log10(2), np.log10(3000), 100)
+    ell_values = np.logspace(np.log10(2), np.log10(n_ell + 2), int(n_ell / 10))
     cl_spectra = {}
 
     # generate a colormap for distinct colors
@@ -326,26 +329,73 @@ def calculate_and_plot_Cls(
         cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
         cl_spectra[f'CC'] = cl
 
-    if plot.lower() == 'yes':
-        # plot all calculated Cl spectra
+    ## PRIMARY SPECTRA
+    cmb_primary_requested = [spec for spec in correlation_types if spec.upper() in ['TT', 'EE', 'BB', 'TE']]
+    
+    if cmb_primary_requested:
+        # Extract standard physical parameters on the fly from the pyccl cosmology object
+        h = cosmology['h']
+        ombh2 = cosmology['Omega_b'] * (h**2)
+        omch2 = cosmology['Omega_c'] * (h**2)
+        A_s = cosmology['A_s']
+        n_s = cosmology['n_s']
+        Omega_k = cosmology['Omega_k']
+        w0 = cosmology['w0']
+        wa = cosmology['wa']
+        l_max = n_ell + 2
+                
+        pars = camb.CAMBparams()
+        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, mnu=0.06, omk=Omega_k)
+        pars.InitPower.set_params(As=A_s, ns=n_s)
+        pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='fluid')
+        pars.set_for_lmax(l_max, lens_potential_accuracy=0)
+        
+        results = camb.get_results(pars)
+        powers = results.get_cmb_power_spectra(pars, CMB_unit='muK')
+        lensed_cls = powers['total']  
+        cmb_map = {'TT': 0, 'EE': 1, 'BB': 2, 'TE': 3}
+        
+        for spec in cmb_primary_requested:
+            idx = cmb_map[spec.upper()]
+            cl_spectra[spec.upper()] = lensed_cls[ell_values.astype(int), idx]
+    
+    # plot
+    if plot:
         plt.figure(figsize=(12, 8))
         for key, cl_values in cl_spectra.items():
-            plt.loglog(ell_values, cl_values, label=key, color=colors(color_idx % colors.N))
+            # Only plot points where Cl is strictly positive to prevent loglog plunging
+            
+            if plot_scaled:
+                # Compute l*(l+1)*C_l / (2*pi)
+                scaled_factor = ell_values * (ell_values + 1) / (2 * np.pi)
+                y_values = cl_values * scaled_factor
+            else:
+                y_values = cl_values
+
+            # plot linear for TE, loglog for others
+            if 'TE' in key.upper():
+                print("TE spectrum is uniquely being plotted on a linear scale.")
+                print("")
+                plt.plot(ell_values, y_values, label=key, color=colors(color_idx % colors.N))
+            else:
+                valid = y_values > 0
+                plt.loglog(ell_values[valid], y_values[valid], label=key, color=colors(color_idx % colors.N))
+                
             color_idx += 1
-
         plt.xlabel(r'Multipole, $\ell$')
-        plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
-        plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
+        
+        # Dynamically change the Y-axis label based on the flag
+        if plot_scaled:
+            plt.ylabel(r'$D_\ell = \ell(\ell+1)C_\ell / 2\pi$ $[\mu\text{K}^2]$')
+            plt.title(r'Scaled Angular Power Spectra ($D_\ell$)')
+        else:
+            plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
+            plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '. join(correlation_types) + ' Correlations')
+            
         plt.legend(loc='best', fontsize='small', bbox_to_anchor=(1.05, 1))
-        plt.grid(True, which="both", ls="-")
-        plt.tight_layout()
-        plt.show()
 
-    elif plot.lower() == 'no':
+    else: 
         return cl_spectra
-
-    else:
-        print(f"Warning: Invalid plot option '{plot}'. Expected 'yes' or 'no'. Proceeding without plotting.")
 
 # plot the covariance matrix, or a subset thereof
 # if no specific desired spectra are given, the whole matrix will be plotted
@@ -516,7 +566,7 @@ def plot_correlation_matrix(
     # Ensure that diagonal elements are non-zero before division
     diagonal = np.sqrt(np.diag(subset_covariance_matrix))
     # Replace zeros in diagonal with a small number to avoid division by zero
-    diagonal[diagonal == 0] = 1e-10  # A small epsilon
+    diagonal[diagonal == 0] = 1e-30  # A small epsilon
     correlation_matrix = subset_covariance_matrix / np.outer(diagonal, diagonal)
 
     # Create a mask for values exactly equal to zero
@@ -2658,7 +2708,8 @@ class FisherForecaster:
         num_samples=200000,
         save_plot = False,
         plot_folder = "plots/Fisher Forecasts",
-        print_summary = False
+        print_summary = False,
+        plot_prior = False
     ):
         from getdist.gaussian_mixtures import GaussianND
 
@@ -2757,7 +2808,40 @@ class FisherForecaster:
             plot_datasets.append(mcmc_samples)
             legend_labels.append("Cobaya MCMC")
             contour_colors.append("darkblue")
+
+        # 5. Optional: Sample from uniform priors and plot as a faint background layer
+        if plot_prior and uniform_priors is not None:
+            import pandas as pd
+            from getdist import MCSamples
             
+            # Generate uniform random samples covering the full prior range
+            prior_samples_dict = {}
+            for p in param_names:
+                if p in uniform_priors:
+                    p_min, p_max = uniform_priors[p]
+                    # Match the exact number of samples for smooth shading
+                    prior_samples_dict[p] = np.random.uniform(p_min, p_max, size=num_samples)
+                else:
+                    # Fallback if a parameter doesn't have an explicit prior bound defined
+                    # (e.g., grab its current axes limits or use a wide placeholder)
+                    fiducial = float(self.fiducial_dict[p])
+                    prior_samples_dict[p] = np.random.uniform(fiducial * 0.5, fiducial * 1.5, size=num_samples)
+                    
+            prior_df = pd.DataFrame(prior_samples_dict)
+            
+            # Turn it into a GetDist MCSamples dataset
+            prior_dataset = MCSamples(
+                samples=prior_df.values, 
+                names=param_names, 
+                labels=labels, 
+                name_tag="Uniform Priors"
+            )
+            
+            # Insert it at the BEGINNING of your lists so it renders in the background
+            plot_datasets.insert(0, prior_dataset)
+            legend_labels.insert(0, "Uniform Priors")
+            contour_colors.insert(0, "lightgray") # Faint color
+        
         # 5. Create GetDist Subplot Plotter and generate the grid
         n_params = len(param_names)
         g = plots.get_subplot_plotter(width_inch=2.5 * n_params)
@@ -2779,7 +2863,7 @@ class FisherForecaster:
             contour_colors=contour_colors,
             legend_labels=legend_labels,
             markers=fiducial_vals,
-            title_limit=1
+            title_limit=None
         )
         
        # Add a beautifully placed global title that stays independent of the plots
