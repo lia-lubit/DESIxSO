@@ -14,7 +14,7 @@ likelihood:
       source_data_path: data/HSC_dist_0_3_bin1.npy
 
       shot_noise_path: data/DESI_shot_noise.npy
-      cmb_noise_phi_path: data/SO_CMB_noise.npy
+      cmb_noise_kappa_path: data/SO_CMB_noise.npy
       shape_noise_path: data/DESI_shape_noise_bin1.npy
 
       data_vector_path: cobaya_data/emulated_lensing_ratios_waw0_source_bin1_all_lens_bins_data_vector.npy

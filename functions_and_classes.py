@@ -172,7 +172,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
     # --- 3. TRIANGLE CONTOUR PLOT ---
 
     for param_name, latex_string in latex_labels.items():
-        if samples.paramNames.contains(param_name):
+        if samples.paramNames.hasParam(param_name):
             samples.paramNames.parWithName(param_name).label = latex_string
         
     g1 = plots.get_subplot_plotter(width_inch=2.5 * len(sampled_params))
@@ -181,7 +181,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         params=sampled_params, 
         filled=True, 
         contour_colors=['darkblue'],
-        title_limit=None,
+        title_limit=1, # this allows the printing to proceed properly
         markers=fiducial_vals
     )
 

@@ -1,7 +1,7 @@
 COBAYA PROJECT TODO LIST
 
 CHAIN 0: add primary CMB spectra to MCMC and Fisher
--- modify plotting function to plot CMB primary spectra
+-- modify plotting function to plot CMB primary spectra -- Done
 -- figure out how to modify likelihood with primary spectra
 -- figure out how to modify covariance with primary spectra
 -- figure out how to update data vector with primary spectra (including noise)
