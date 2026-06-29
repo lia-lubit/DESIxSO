@@ -755,7 +755,7 @@ def build_tracer_dict(lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, 
 # build noise dictionary
 # shot noise needs to have as many entries as lens bins
 # shape noise needs to have as many entries as source bins
-def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, cmb_noise_T=None, cmb_noise_E=None):
+def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, cmb_noise_EE=None, cmb_noise_TE=None):
     
     noise_dict = {}
 
@@ -771,15 +771,18 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
             # Make it an ell-dependent array for consistent addition
             noise_dict[(f'kappa_g{i}', f'kappa_g{i}')] = np.ones_like(ells) * shape_noise_source[i-1]
 
-    if cmb_noise_kappa is not None:
-        # assuming cmb_noise_kappa is already an ell-dependent array
-        noise_dict[('kappa_c','kappa_c')] = cmb_noise_kappa
+    if cmb_noise_kk is not None:
+        # assuming cmb_noise_kk is already an ell-dependent array
+        noise_dict[('kappa_c','kappa_c')] = cmb_noise_kk
 
-    if cmb_noise_T is not None:
-        noise_dict[('T','T')] = cmb_noise_T
+    if cmb_noise_TT is not None:
+        noise_dict[('T','T')] = cmb_noise_TT
 
-    if cmb_noise_E is not None:
-        noise_dict[('E','E')] = cmb_noise_E
+    if cmb_noise_EE is not None:
+        noise_dict[('E','E')] = cmb_noise_EE
+
+    if cmb_noise_TE is not None:
+        noise_dict[('T','E')] = cmb_noise_TE
 
     return noise_dict
 
@@ -879,10 +882,13 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
     # add noise terms
     if noise_dict is not None:
         for key_noise, noise_val in noise_dict.items():
-            # only add noise to auto-spectra.
+            # generally only add noise to auto-spectra.
             if key_noise[0] == key_noise[1]:
                 spectra_dict[key_noise] += noise_val
-
+            # also add TE noise (checking both orderings)
+            elif (key_noise == ('E', 'T')) or (key_noise == ('T', 'E')):
+                spectra_dict[('E', 'T')] += noise_val 
+    
     return spectra_dict
     
 # helper function to generate desired pairs based on simplified input
@@ -967,9 +973,10 @@ def build_covariance_from_data(
     binsize=1,  
     shot_noise_lens=None,
     shape_noise_source=None,
-    cmb_noise_kappa=None,
-    cmb_noise_T=None,
-    cmb_noise_E=None,
+    cmb_noise_kk=None,
+    cmb_noise_TT=None,
+    cmb_noise_EE=None,
+    cmb_noise_TE=None,
     magnification_bias_lenses=None, 
     desired_spectra=None,
     linear_emulator=None,
@@ -989,7 +996,7 @@ def build_covariance_from_data(
     # build spectra
     lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses, z_max = z_max, n_chi = n_chi)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kappa, cmb_noise_T = cmb_noise_T, cmb_noise_E = cmb_noise_E)
+    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kk, cmb_noise_TT = cmb_noise_TT, cmb_noise_EE = cmb_noise_EE, cmb_noise_TE = cmb_noise_TE)
     full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator, CMB_primaries = CMB_primaries)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
@@ -1580,12 +1587,12 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         else:
             self.shape_noise_source = None
 
-        cmb_noise_path = self.data_specs.get('cmb_noise_kappa_path')
+        cmb_noise_path = self.data_specs.get('cmb_noise_kk_path')
         if cmb_noise_path:
             print(f"  Loading CMB noise from: {cmb_noise_path}")
-            self.cmb_noise_kappa = np.load(cmb_noise_path)
+            self.cmb_noise_kk = np.load(cmb_noise_path)
         else:
-            self.cmb_noise_kappa = None
+            self.cmb_noise_kk = None
 
         # retrieve lens and source data arrays dynamically.
         # these are expected to be available as global variables in the notebook
@@ -1663,7 +1670,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
                     binsize=self.binsize,
                     shot_noise_lens=self.shot_noise_lens,
                     shape_noise_source=self.shape_noise_source,
-                    cmb_noise_kappa=self.cmb_noise_kappa,
+                    cmb_noise_kk=self.cmb_noise_kk,
                     magnification_bias_lenses=self.magnification_bias_lenses,
                     desired_spectra=self.desired_spectra,
                     linear_emulator=self.linear_emulator,
@@ -1745,7 +1752,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kk)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator)
 
         # flatten the current Cls into a model data vector 'M'
@@ -1805,7 +1812,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses
         )
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kk)
         
         # 3. Call your emulators via your spectra builder
         current_spectra_dict = build_spectra_dict(
@@ -1886,12 +1893,12 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         else:
             self.shape_noise_source = None
 
-        cmb_noise_path = self.data_specs.get('cmb_noise_kappa_path')
+        cmb_noise_path = self.data_specs.get('cmb_noise_kk_path')
         if cmb_noise_path:
             print(f"  Loading CMB noise from: {cmb_noise_path}")
-            self.cmb_noise_kappa = np.load(cmb_noise_path)
+            self.cmb_noise_kk = np.load(cmb_noise_path)
         else:
-            self.cmb_noise_kappa = None
+            self.cmb_noise_kk = None
 
         # retrieve lens and source data arrays dynamically.
         # these are expected to be available as global variables in the notebook
@@ -1969,7 +1976,7 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
                     binsize=self.binsize,
                     shot_noise_lens=self.shot_noise_lens,
                     shape_noise_source=self.shape_noise_source,
-                    cmb_noise_kappa=self.cmb_noise_kappa,
+                    cmb_noise_kk=self.cmb_noise_kk,
                     magnification_bias_lenses=self.magnification_bias_lenses,
                     desired_spectra=self.desired_spectra, 
                     linear_emulator = None,
@@ -2052,7 +2059,7 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kk)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator = None, boost_emulator = None)
 
         # flatten the current Cls into a model data vector 'M'
@@ -2113,7 +2120,7 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         )
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
         noise_dict = build_noise_dict(
-            self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa
+            self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kk
         )
         
         # 3. Call your emulators via your spectra builder
@@ -2151,11 +2158,10 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 # Fisher Forecast class
-#### ADD CMB PRIMARIES
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
-                 shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, cmb_noise_T=None, 
-                 cmb_noise_E=None, magnification_bias_lenses=None, desired_spectra=None, 
+                 shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
+                 cmb_noise_EE=None, cmb_noise_TE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, CMB_primaries=False, z_max=6, n_chi=1024):
 
         self.cosmology = cosmology
@@ -2168,7 +2174,7 @@ class FisherForecaster:
         self.survey_params = {
             'f_sky': f_sky, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
-            'cmb_noise_kappa': cmb_noise_kappa, 'cmb_noise_T': cmb_noise_T, 'cmb_noise_E': cmb_noise_E, 
+            'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE, 'cmb_noise_TE': cmb_noise_TE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
             'linear_emulator': linear_emulator, 'boost_emulator': boost_emulator, 'CMB_primaries': CMB_primaries, 
             'z_max': z_max, 'n_chi': n_chi
@@ -2237,7 +2243,7 @@ class FisherForecaster:
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses'], z_max = p['z_max'], n_chi=p['n_chi'])
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_kappa'], cmb_noise_T = p['cmb_noise_T'], cmb_noise_E = p['cmb_noise_E'])
+        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], cmb_noise_kk = p['cmb_noise_kk'], cmb_noise_TT = p['cmb_noise_TT'], cmb_noise_EE = p['cmb_noise_EE'], cmb_noise_TE = p['cmb_noise_TE'])
         full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'], CMB_primaries=self.CMB_primaries)
         
         if self.sliced_pairs is not None: 
