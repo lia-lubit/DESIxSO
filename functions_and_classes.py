@@ -680,6 +680,27 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
         plt.show()
         
 ## Covariances etc
+
+# build data vector
+def build_data_vector(forecast_map, spectra_dict, n_ell, binsize): 
+    
+    observed_data_vector = np.array([])
+    num_binned_ells = int(np.ceil(n_ell / binsize))
+    
+    for pair in forecast_map.pairs:
+        unbinned_cls = spectra_dict[pair]
+        binned_cls_for_pair = []
+        for i in range(0, n_ell, binsize):
+            end_idx = min(i + binsize, len(unbinned_cls))
+            if i < end_idx:
+                binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
+            else:
+                binned_cls_for_pair.append(0.0)
+        while len(binned_cls_for_pair) < num_binned_ells:
+            binned_cls_for_pair.append(0.0)
+        observed_data_vector = np.concatenate((observed_data_vector, binned_cls_for_pair))
+
+    return observed_data_vector
     
 # compute general spectra with noise
 def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None):
@@ -884,7 +905,6 @@ def build_covariance_from_data(
         return sliced_cov, sliced_spectra_dict, sliced_f_map
 
 # slice vector and matrix given desired pairs
-##### CHECK
 ##### Modify to make the return sliced matrix a real CovarianceMatrix object??
 def slice_matrix(
     cov_obj, 
@@ -924,8 +944,6 @@ def slice_matrix(
     all_ranges = []
     final_sliced_pairs = []
 
-    #### CHECK
-    #### trying to keep the order correct
     for pair in f_map.pairs:
         if pair in pairs_to_slice:
             try:
@@ -955,7 +973,7 @@ def slice_matrix(
     sliced_matrix_raw = sliced_matrix_raw[:, keep_indices]
     
     # --- FIX: Wrap the matrix in a class container to preserve properties ---
-    ### FIX CAUSE THIS IS NOW AN IMPROPER OBJECT -- THE MATRIX IS CUT BUT THE OTHER STUFF WILL BE WRONG
+    ### FIX CAUSE THIS IS NOW AN IMPROPER OBJECT -- THE MATRIX IS CUT CORRECTLY BUT THE OTHER STUFF WILL BE WRONG
     from copy import copy
     sliced_cov_obj = copy(cov_obj)
     sliced_cov_obj.matrix = sliced_matrix_raw
@@ -1092,11 +1110,12 @@ def predict_boost_Pk(cosmology, emulator, z, cmin, eta_0):
 # we need to figure out what spectra and spectra pairs must be calculated for any given data set and number of ells
 # the order of forecastmaps should be consistent across the board
 class ForecastMap:
-    def __init__(self, n_lens=4, n_src=4, n_ell=20, desired_pairs=None):
+    def __init__(self, n_lens=4, n_src=4, n_ell=20, desired_pairs=None, CMB_primaries=False):
         self.n_lens = n_lens
         self.n_src = n_src
         self.n_ell = n_ell
-
+        self.CMB_primaries = CMB_primaries
+        
         # list of unique spectra
         if desired_pairs:
             self.pairs = self._process_desired_pairs(desired_pairs)
@@ -1111,7 +1130,7 @@ class ForecastMap:
     def _generate_all_pairs(self): 
         p = []
 
-        # CMB spectra
+        # CMB lensing convergence auto spectrum
         p += [('kappa_c','kappa_c')]
 
         # Lens galaxies auto/cross -- not zero indexing because of convention
@@ -1131,12 +1150,39 @@ class ForecastMap:
 
         # Lens galaxies -- CMB lensing cross
         for i in range(1, self.n_lens + 1):
-            p.append((f'g{i}', 'kappa_c'))
+            p.append((f'g{i}', f'kappa_c'))
 
         # Galaxy lensing -- CMB lensing cross
         for j in range(1, self.n_src + 1):
-            p.append((f'kappa_g{j}', 'kappa_c'))
+            p.append((f'kappa_g{j}', f'kappa_c'))
+            
+        # add CMB_primaries, if desired
+        if self.CMB_primaries:
+            # CMB temperature auto-spectrum
+            p += [('T', 'T')]
+    
+            # CMB E-mode auto-spectrum
+            p += [('E', 'E')]
+    
+            # CMB temperature-E-mode cross-spectra
+            p += [('E', 'T')]
 
+            # CMB primary -- CMB lensing
+            p += [('T', 'kappa_c')]
+            p += [('E', 'kappa_c')]
+
+            # CMB primary -- lens galaxies cross
+            for i in range(1, self.n_lens + 1):
+                p.append((f'g{i}', 'T'))
+            for i in range(1, self.n_lens + 1):
+                p.append((f'g{i}', 'E'))
+ 
+            # CMB primary -- galaxy lensing cross
+            for j in range(1, self.n_src + 1):
+                p.append((f'kappa_g{j}', 'T'))
+            for j in range(1, self.n_src + 1):
+                p.append((f'kappa_g{j}', 'E'))
+                
         # Canonicalize every single pair internally, then sort alphabetically
         canonical_pairs = []
         for pair in p:
@@ -1166,6 +1212,7 @@ class ForecastMap:
 
             if canonical_pair not in user_pairs:
                 user_pairs.append(canonical_pair)
+                
         # make sure order is the same as it is when generate_all_pairs is used
         user_pairs_set = list(dict.fromkeys(user_pairs))
         master_order = self._generate_all_pairs()
@@ -1190,7 +1237,6 @@ class ForecastMap:
 
 # build covariance matrix
 # this is a class that is a massive covariance matrix
-# with functions that has functions
 class CovarianceMatrix:
     # initialize
     def __init__(self, f_map, spectra_dict, f_sky, binsize=1):
@@ -1230,6 +1276,7 @@ class CovarianceMatrix:
                 return self.spectra_dict[key_bwd]
             else:
                 # If the cross-spectrum is not explicitly calculated, assume it's zero.
+                print("cross-spectrum for ", x, ", ", y, " is not given, and is assumed to be zero.")
                 return np.zeros(self.N_ell_unbinned) # Return an array of zeros of unbinned length
 
         Cl_ac = get_Cl(a, c)
@@ -1375,19 +1422,11 @@ def instrument_Pk2D(pk2d_object):
     print("Pk2D object instrumented for timing.")
     return pk2d_object
 
-# more efficient chi2 calc using JAX
-@jax.jit
-def jax_compute_loglike(model_cl, observed_data, inv_covariance):
-    delta = observed_data - model_cl
-    # compute: -0.5 * (D - M)^T * C^-1 * (D - M)
-    chi2 = jnp.dot(delta, jnp.dot(inv_covariance, delta))
-    return -0.5 * chi2
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ## LIKELIHOODS (these are also classes)
-#### FIX THESE -- I THINK THE ORDERING PROBLEMS ARE COMING FROM HERE, SINCE FISHER IS FINE
 
 # make SO DESI Likelihood class w/emulator
 # the emulator needs to be used for the covariance matrix and data vector too, to ensure self-consistency
@@ -2015,8 +2054,6 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         return chi2
 
 # Fisher Forecast class
-# the function method involves passing the same things over and over again to different functions
-# this becomes inefficient and a bit messy
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, 
