@@ -703,6 +703,7 @@ def build_data_vector(forecast_map, spectra_dict, n_ell, binsize):
     return observed_data_vector
     
 # compute general spectra with noise
+# this does NOT include CMB primaries
 def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None):
     # build CCL tracers from distributions
     z_lens = lens_data[:, 0]
@@ -738,6 +739,7 @@ def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_le
     return lens_tracers, lensing_tracers, cmb_tracer
 
 # build tracer dictionary
+# this does NOT include CMB primaries
 def build_tracer_dict(lens_tracers, lensing_tracers, cmb_tracer):
     tracer_dict = {'kappa_c': cmb_tracer}
 
@@ -751,7 +753,8 @@ def build_tracer_dict(lens_tracers, lensing_tracers, cmb_tracer):
 # build noise dictionary
 # shot noise needs to have as many entries as lens bins
 # shape noise needs to have as many entries as source bins
-def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None):
+def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, cmb_noise_T=None, cmb_noise_E=None):
+    
     noise_dict = {}
 
     if shot_noise_lens is not None:
@@ -770,10 +773,17 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
         # assuming cmb_noise_kappa is already an ell-dependent array
         noise_dict[('kappa_c','kappa_c')] = cmb_noise_kappa
 
+    if cmb_noise_T is not None:
+        noise_dict[('T','T')] = cmb_noise_T
+
+    if cmb_noise_E is not None:
+        noise_dict[('E','E')] = cmb_noise_E
+
     return noise_dict
 
 # build spectra dictionary w/ or w/o emulator
-def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None):
+#### ADD CMB PRIMARIES
+def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None, CMB_primaries = False):
     spectra_dict = {}
 
     # make Pk2D object if an emulator is present
@@ -854,12 +864,43 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
         for i in range(1, n_source_bins + 1):
             all_pairs.append(_canonicalize_pair(f'kappa_g{i}', 'kappa_c'))
 
-    # Remove duplicates (though with the current logic, there shouldn't be any)
-    # and ensure it's a list of tuples
+    if 'EE' in desired_spectra:
+        all_pairs.append(('E', 'E'))
+
+    if 'TT' in desired_spectra:
+        all_pairs.append(('T', 'T'))
+
+    if 'ET' or 'TE' in desired_spectra:  
+        all_pairs.append(_canonicalize_pair('E', 'T'))
+
+    if 'CE' in desired_spectra:  # CMB Lensing x CMB E-mode
+        all_pairs.append(_canonicalize_pair('kappa_c', 'E'))
+
+    if 'CT' in desired_spectra:  # CMB Lensing x CMB Temperature
+        all_pairs.append(_canonicalize_pair('kappa_c', 'T'))
+
+    if 'EL' in desired_spectra:  # CMB E-mode x Source Galaxy Lensing (Tomographic)
+        for i in range(1, n_source_bins + 1):
+            all_pairs.append(_canonicalize_pair('E', f'kappa_g{i}'))
+
+    if 'LT' in desired_spectra:  # Source Galaxy Lensing x CMB Temperature (Tomographic)
+        for i in range(1, n_source_bins + 1):
+            all_pairs.append(_canonicalize_pair(f'kappa_g{i}', 'T'))
+
+    if 'EG' in desired_spectra:  # CMB E-mode x Lens Galaxy Clustering (Tomographic)
+        for i in range(1, n_lens_bins + 1):
+            all_pairs.append(_canonicalize_pair('E', f'g{i}'))
+
+    if 'GT' in desired_spectra:  # Lens Galaxy Clustering x CMB Temperature (Tomographic / ISW)
+        for i in range(1, n_lens_bins + 1):
+            all_pairs.append(_canonicalize_pair(f'g{i}', 'T'))
+            
+    # Remove duplicates and ensure it's a list of tuples
     return list(dict.fromkeys(all_pairs))
     
 # build covariance matrix w or w/o emulator (full unless otherwise specified)
 # build full matrix, potentially pass a smaller one 
+#### ADD CMB PRIMARIES
 #### CHECK
 def build_covariance_from_data(
     cosmo,
@@ -874,10 +915,11 @@ def build_covariance_from_data(
     magnification_bias_lenses=None, 
     desired_spectra=None,
     linear_emulator=None,
-    boost_emulator=None
+    boost_emulator=None,
+    CMB_primaries=False
 ):
 
-    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs = None)
+    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs = None, CMB_primaries = CMB_primaries)
 
     # Use the full range of unbinned ells for CCL calculations
     ells = np.arange(2, n_ell + 2)
@@ -980,7 +1022,6 @@ def slice_matrix(
     
     return sliced_cov_obj
 
-### Fisher Forecasts + Helpers
 # get parameter dict from a given cosmology
 def extract_param_dict(cosmology):
 
@@ -1430,6 +1471,7 @@ def instrument_Pk2D(pk2d_object):
 
 # make SO DESI Likelihood class w/emulator
 # the emulator needs to be used for the covariance matrix and data vector too, to ensure self-consistency
+#### ADD CMB PRIMARIES
 class SO_x_DESI_Likelihood_w_emulator(Likelihood):
 
     params = {
@@ -1676,10 +1718,6 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         return log_likelihood
     
     def profile_chi2(self, **kwargs):
-        """
-        Computes and prints the components of the chi-squared 
-        for the current parameter evaluation.
-        """
         # Pull parameters from kwargs or fall back to your fiducial specs
         Omega_m = kwargs.get('Omega_m', 0.315)
         Omega_b = kwargs.get('Omega_b', 0.045)
@@ -1743,6 +1781,7 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         return chi2
         
 # make SO DESI Likelihood class
+#### ADD CMB PRIMARIES
 class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
 
     params = {
@@ -1986,10 +2025,6 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         return log_likelihood
 
     def profile_chi2(self, **kwargs):
-        """
-        Computes and prints the components of the chi-squared 
-        for the current parameter evaluation.
-        """
         # Pull parameters from kwargs or fall back to your fiducial specs
         Omega_m = kwargs.get('Omega_m', 0.315)
         Omega_b = kwargs.get('Omega_b', 0.045)
@@ -2053,7 +2088,10 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         
         return chi2
 
+# -------------------------------------------------------------------------------------------------------------------------------------------- #
+
 # Fisher Forecast class
+#### ADD CMB PRIMARIES
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, 
