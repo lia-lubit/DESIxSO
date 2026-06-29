@@ -737,12 +737,12 @@ def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_le
     cmb_lensing_tracer = ccl.CMBLensingTracer(cosmo, z_source=1090)
     cmb_temperature_tracer = ccl.ISWTracer(cosmo, z_max = z_max, n_chi = n_chi)
 
-    return lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
+    return lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer
 
 # build tracer dictionary
 def build_tracer_dict(lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer):
     tracer_dict = {'kappa_c': cmb_lensing_tracer}
-    tracer_dict += {'T': cmb_temperature_tracer}
+    tracer_dict['T'] = cmb_temperature_tracer
     
     for i, tr in enumerate(lens_tracers):
         tracer_dict[f'g{i+1}'] = tr
@@ -829,32 +829,33 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
     if CMB_primaries:
         
         # initialize cosmology with CAMB
+        h = cosmo['h']
+        ombh2 = cosmo['Omega_b'] * (h**2)
+        omch2 = cosmo['Omega_c'] * (h**2)
+        A_s = cosmo['A_s']
+        n_s = cosmo['n_s']
+        Omega_k = cosmo['Omega_k']
+        w0 = cosmo['w0']
+        wa = cosmo['wa']
+        l_max = np.max(ells)
+                
         pars = camb.CAMBparams()
-        pars.set_cosmology(
-            H0=cosmo['h'] * 100,
-            ombh2=cosmo['Omega_b'] * cosmo['h']**2,
-            omch2=cosmo['Omega_c'] * cosmo['h']**2,
-            tau=0.054, 
-            As=cosmo['A_s'],
-            ns=cosmo['n_s']
-        )
-        
-        w0 = cosmo['w0'] 
-        wa = cosmo['wa'] 
+        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, mnu=0.06, omk=Omega_k)
+        pars.InitPower.set_params(As=A_s, ns=n_s)
         pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='fluid')
+        pars.set_for_lmax(l_max, lens_potential_accuracy=0)
         
-        pars.InitPower.set_params(As=cosmo['A_s'], ns=cosmo['n_s']))
-        pars.InitPower.set_params(As=cosmo['A_s'], ns=cosmo['n_s'])
-        pars.set_for_lmax(int(np.max(ells)), lens_potential_accuracy=0)
         results = camb.get_results(pars)
         powers = results.get_cmb_power_spectra(pars, CMB_unit='muK')
-
+        lensed_cls = powers['total']  
+        camb_l = np.arange(lensed_cls.shape[0])
+        cmb_map = {'TT': 0, 'EE': 1, 'BB': 2, 'TE': 3}
+        
         # compute primordial CMB TT, EE, TE using CAMB from the CCL cosmology parameters
         # CAMB outputs unlensed/lensed Cls up to lmax (order: TT, EE, BB, TE)
-        camb_l = np.arange(len(powers['lensed_cl_regression'][:, 0]))
-        cl_tt = np.interp(ells, camb_l, powers['lensed_cl_regression'][:, 0])
-        cl_ee = np.interp(ells, camb_l, powers['lensed_cl_regression'][:, 1])
-        cl_te = np.interp(ells, camb_l, powers['lensed_cl_regression'][:, 3])
+        cl_tt = np.interp(ells, camb_l, lensed_cls[:, 0])
+        cl_ee = np.interp(ells, camb_l, lensed_cls[:, 1])
+        cl_te = np.interp(ells, camb_l, lensed_cls[:, 3])
         spectra_dict[('T', 'T')] = cl_tt
         spectra_dict[('E', 'E')] = cl_ee
         spectra_dict[('E', 'T')] = cl_te
@@ -2193,7 +2194,7 @@ class FisherForecaster:
         # default to full spectra
         if p['desired_spectra'] is None: 
             if self.CMB_primaries:
-                p['desired_spectra'] = [['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'ET', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
+                p['desired_spectra'] = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'ET', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
             else: 
                 p['desired_spectra'] = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
 
@@ -2236,7 +2237,7 @@ class FisherForecaster:
             cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses'], z_max = p['z_max'], n_chi=p['n_chi'])
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
         noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_kappa'], cmb_noise_T = p['cmb_noise_T'], cmb_noise_E = p['cmb_noise_E'])
-        full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'])
+        full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'], CMB_primaries=self.CMB_primaries)
         
         if self.sliced_pairs is not None: 
             final_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in self.sliced_pairs}
