@@ -265,7 +265,7 @@ def calculate_and_plot_Cls(
 
     # initialize ccl.NumberCountsTracer for each lens and source bin
     lens_tracers_nc = []
-    lensing_tracers_nc = []
+    galaxy_lensing_tracers_nc = []
     for i, n_z_lens_bin in enumerate(n_lens_dists):
         # use a constant linear bias of 1
         bias_values = np.ones_like(z_lens_grid)
@@ -276,10 +276,10 @@ def calculate_and_plot_Cls(
     for i, n_z_source_bin in enumerate(n_source_dists):
             # use a constant linear bias of 1
             tracer = ccl.WeakLensingTracer(cosmology, dndz=(z_source_grid, n_z_source_bin))
-            lensing_tracers_nc.append(tracer)
+            galaxy_lensing_tracers_nc.append(tracer)
 
     # create CMB lensing tracerrs
-    CMB_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
+    cmb_lensing_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
 
     # define common range of multipoles and a dictionary
     ell_values = np.logspace(np.log10(2), np.log10(n_ell + 2), int(n_ell / 10))
@@ -300,31 +300,31 @@ def calculate_and_plot_Cls(
     if 'LL' in correlation_types:
         for i in range(num_source_bins):
             for k in range(i, num_source_bins): # Avoid duplicates, i.e., LL_1_2 is same as LL_2_1
-                cl = cosmology.angular_cl(lensing_tracers_nc[i], lensing_tracers_nc[k], ell_values, p_of_k_a = Pk2D_object)
+                cl = cosmology.angular_cl(galaxy_lensing_tracers_nc[i], galaxy_lensing_tracers_nc[k], ell_values, p_of_k_a = Pk2D_object)
                 cl_spectra[f'LL{i+1}_{k+1}'] = cl
 
     # galaxy-galaxy lensing cross-corr spectra
     if 'GL' in correlation_types:
         for i in range (num_source_bins):
             for k in range(num_lens_bins):
-                cl = cosmology.angular_cl(lens_tracers_nc[k], lensing_tracers_nc[i], ell_values, p_of_k_a = Pk2D_object)
+                cl = cosmology.angular_cl(lens_tracers_nc[k], galaxy_lensing_tracers_nc[i], ell_values, p_of_k_a = Pk2D_object)
                 cl_spectra[f'GL{i+1}_{k+1}'] = cl
 
     # CMB lensing-galaxy lensing cross-corr spectra
     if 'CL' in correlation_types:
         for j in range(num_source_bins):
-            cl = cosmology.angular_cl(lensing_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
+            cl = cosmology.angular_cl(galaxy_lensing_tracers_nc[j], cmb_lensing_tracer, ell_values, p_of_k_a = Pk2D_object)
             cl_spectra[f'CL{j+1}'] = cl
 
     # CMB lensing-lens galaxies cross-corr spectra
     if 'CG' in correlation_types:
         for j in range(num_lens_bins):
-            cl = cosmology.angular_cl(lens_tracers_nc[j], CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
+            cl = cosmology.angular_cl(lens_tracers_nc[j], cmb_lensing_tracer, ell_values, p_of_k_a = Pk2D_object)
             cl_spectra[f'CG{j+1}'] = cl
 
     # CMB lensing-CMB lensing auto-corr spectra
     if 'CC' in correlation_types:
-        cl = cosmology.angular_cl(CMB_tracer, CMB_tracer, ell_values, p_of_k_a = Pk2D_object)
+        cl = cosmology.angular_cl(cmb_lensing_tracer, cmb_lensing_tracer, ell_values, p_of_k_a = Pk2D_object)
         cl_spectra[f'CC'] = cl
 
     ## PRIMARY SPECTRA
@@ -703,8 +703,9 @@ def build_data_vector(forecast_map, spectra_dict, n_ell, binsize):
     return observed_data_vector
     
 # compute general spectra with noise
-# this does NOT include CMB primaries
-def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None):
+# z_max and n_chi are given by the examples in pyccl
+#### are these fallback values ok?
+def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses=None, z_max = 6, n_chi = 1024):
     # build CCL tracers from distributions
     z_lens = lens_data[:, 0]
     z_source = source_data[:, 0]
@@ -727,25 +728,25 @@ def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_le
                                         mag_bias=(z_lens, mag_bias_values) if mag_bias_values is not None else None)
         lens_tracers.append(tracer)
 
-    lensing_tracers = []
+    galaxy_lensing_tracers = []
     for i in range(1, n_src + 1):
         nz = source_data[:, i]
-        # WeakLensingTracer does not have a 'mag_bias' parameter for number counts
         tracer = ccl.WeakLensingTracer(cosmo, dndz=(z_source, nz))
-        lensing_tracers.append(tracer)
+        galaxy_lensing_tracers.append(tracer)
 
-    cmb_tracer = ccl.CMBLensingTracer(cosmo, z_source=1090)
+    cmb_lensing_tracer = ccl.CMBLensingTracer(cosmo, z_source=1090)
+    cmb_temperature_tracer = ccl.ISWTracer(cosmo, z_max = z_max, n_chi = n_chi)
 
-    return lens_tracers, lensing_tracers, cmb_tracer
+    return lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
 
 # build tracer dictionary
-# this does NOT include CMB primaries
-def build_tracer_dict(lens_tracers, lensing_tracers, cmb_tracer):
-    tracer_dict = {'kappa_c': cmb_tracer}
-
+def build_tracer_dict(lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer):
+    tracer_dict = {'kappa_c': cmb_lensing_tracer}
+    tracer_dict += {'T': cmb_temperature_tracer}
+    
     for i, tr in enumerate(lens_tracers):
         tracer_dict[f'g{i+1}'] = tr
-    for i, tr in enumerate(lensing_tracers):
+    for i, tr in enumerate(galaxy_lensing_tracers):
         tracer_dict[f'kappa_g{i+1}'] = tr
 
     return tracer_dict
@@ -782,7 +783,9 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
     return noise_dict
 
 # build spectra dictionary w/ or w/o emulator
-#### ADD CMB PRIMARIES
+#### CHECK
+#### LEARN UNDERLYING PHYSICS
+#### does this function actually consider f_map at all?
 def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None, CMB_primaries = False):
     spectra_dict = {}
 
@@ -793,6 +796,8 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         Pk2D_object = make_Pk2D(cosmo, linear_emulator = linear_emulator, boost_emulator = boost_emulator, z_arr = z_grid, cmin = 3.13, eta_0 = 0.60)
 
     # Iterate through all unique pairs of tracers in tracer_dict to calculate Cls
+    # this will get all the possible pairs of (kappa_c, kappa_g, g, T)
+    # I'll have to later write over TT b/c I don't think angular_cl does that properly
     tracer_labels = list(tracer_dict.keys())
     for i, label1 in enumerate(tracer_labels):
         for j, label2 in enumerate(tracer_labels):
@@ -819,6 +824,56 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
             else:
                 spectra_dict[(label2, label1)] = Cl # Store with smaller label first
 
+    # CMB primaries -- EE, TE, TT, Ekappa_c, E_kappa_g, E_g
+    # it's fine to add them all here, since in later functions we'll go in alphabetal order through the spectra_dict anyway
+    if CMB_primaries:
+        
+        # initialize cosmology with CAMB
+        pars = camb.CAMBparams()
+        pars.set_cosmology(
+            H0=cosmo['h'] * 100,
+            ombh2=cosmo['Omega_b'] * cosmo['h']**2,
+            omch2=cosmo['Omega_c'] * cosmo['h']**2,
+            tau=0.054, 
+            As=cosmo['A_s'],
+            ns=cosmo['n_s']
+        )
+        
+        w0 = cosmo['w0'] 
+        wa = cosmo['wa'] 
+        pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='fluid')
+        
+        pars.InitPower.set_params(As=cosmo['A_s'], ns=cosmo['n_s']))
+        pars.InitPower.set_params(As=cosmo['A_s'], ns=cosmo['n_s'])
+        pars.set_for_lmax(int(np.max(ells)), lens_potential_accuracy=0)
+        results = camb.get_results(pars)
+        powers = results.get_cmb_power_spectra(pars, CMB_unit='muK')
+
+        # compute primordial CMB TT, EE, TE using CAMB from the CCL cosmology parameters
+        # CAMB outputs unlensed/lensed Cls up to lmax (order: TT, EE, BB, TE)
+        camb_l = np.arange(len(powers['lensed_cl_regression'][:, 0]))
+        cl_tt = np.interp(ells, camb_l, powers['lensed_cl_regression'][:, 0])
+        cl_ee = np.interp(ells, camb_l, powers['lensed_cl_regression'][:, 1])
+        cl_te = np.interp(ells, camb_l, powers['lensed_cl_regression'][:, 3])
+        spectra_dict[('T', 'T')] = cl_tt
+        spectra_dict[('E', 'E')] = cl_ee
+        spectra_dict[('E', 'T')] = cl_te
+
+        # Add CMB cross-correlations with late-time tracers (kappa_c, kappa_g, g)
+        # Determine active bins from tracer_dict keys
+        lens_bins = [k for k in tracer_dict.keys() if k.startswith('g')]
+        source_bins = [k for k in tracer_dict.keys() if k.startswith('kappa_g')]
+
+        # E-modes do not cross-correlate with late-time structures (scalar perturbations)
+        if 'kappa_c' in tracer_dict:
+            spectra_dict[('E', 'kappa_c')] = np.zeros_like(ells) 
+        
+        for g_bin in lens_bins:
+            spectra_dict[('E', g_bin)] = np.zeros_like(ells)     
+
+        for kg_bin in source_bins:
+            spectra_dict[('E', kg_bin)] = np.zeros_like(ells)    
+        
     # add noise terms
     if noise_dict is not None:
         for key_noise, noise_val in noise_dict.items():
@@ -900,7 +955,6 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
     
 # build covariance matrix w or w/o emulator (full unless otherwise specified)
 # build full matrix, potentially pass a smaller one 
-#### ADD CMB PRIMARIES
 #### CHECK
 def build_covariance_from_data(
     cosmo,
@@ -912,11 +966,15 @@ def build_covariance_from_data(
     shot_noise_lens=None,
     shape_noise_source=None,
     cmb_noise_kappa=None,
+    cmb_noise_T=None,
+    cmb_noise_E=None,
     magnification_bias_lenses=None, 
     desired_spectra=None,
     linear_emulator=None,
     boost_emulator=None,
-    CMB_primaries=False
+    CMB_primaries=False,
+    z_max=6,
+    n_chi=1024
 ):
 
     full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs = None, CMB_primaries = CMB_primaries)
@@ -927,10 +985,10 @@ def build_covariance_from_data(
     cosmo.compute_growth()
     
     # build spectra
-    lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses)
-    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kappa)
-    full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator)
+    lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses, z_max = z_max, n_chi = n_chi)
+    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
+    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kappa, cmb_noise_T = cmb_noise_T, cmb_noise_E = cmb_noise_E)
+    full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator, CMB_primaries = CMB_primaries)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
     full_cov = CovarianceMatrix(full_f_map, full_spectra_dict, f_sky, binsize=binsize)
@@ -1682,9 +1740,9 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(2, self.n_ell + 2) # unbinned ells
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator)
 
@@ -1741,10 +1799,10 @@ class SO_x_DESI_Likelihood_w_emulator(Likelihood):
         
         # 2. Build tracers and noise dictionaries
         ells = np.arange(2, self.n_ell + 2)
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses
         )
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
         
         # 3. Call your emulators via your spectra builder
@@ -1989,9 +2047,9 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(2, self.n_ell + 2) # unbinned ells
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator = None, boost_emulator = None)
 
@@ -2048,10 +2106,10 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
         
         # 2. Build tracers and noise dictionaries
         ells = np.arange(2, self.n_ell + 2)
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses
         )
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
         noise_dict = build_noise_dict(
             self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kappa
         )
@@ -2094,19 +2152,24 @@ class SO_x_DESI_Likelihood_w_o_emulator(Likelihood):
 #### ADD CMB PRIMARIES
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
-                 shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, 
-                 magnification_bias_lenses=None, desired_spectra=None, 
-                 linear_emulator=None, boost_emulator=None, step_dict=None):
+                 shot_noise_lens=None, shape_noise_source=None, cmb_noise_kappa=None, cmb_noise_T=None, 
+                 cmb_noise_E=None, magnification_bias_lenses=None, desired_spectra=None, 
+                 linear_emulator=None, boost_emulator=None, step_dict=None, CMB_primaries=False, z_max=6, n_chi=1024):
 
         self.cosmology = cosmology
         self.lens_data = lens_data
         self.source_data = source_data
-                     
+        self.CMB_primaries = CMB_primaries
+        self.z_max = z_max
+        self.n_chi = n_chi
+    
         self.survey_params = {
             'f_sky': f_sky, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
-            'cmb_noise_kappa': cmb_noise_kappa, 'magnification_bias_lenses': magnification_bias_lenses,
-            'desired_spectra': desired_spectra, 'linear_emulator': linear_emulator, 'boost_emulator': boost_emulator
+            'cmb_noise_kappa': cmb_noise_kappa, 'cmb_noise_T': cmb_noise_T, 'cmb_noise_E': cmb_noise_E, 
+            'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
+            'linear_emulator': linear_emulator, 'boost_emulator': boost_emulator, 'CMB_primaries': CMB_primaries, 
+            'z_max': z_max, 'n_chi': n_chi
         }
         
         # step sizes for numerical derivatives
@@ -2125,14 +2188,17 @@ class FisherForecaster:
         p = self.survey_params
         self.ells = np.arange(2, p['n_ell'] + 2)
         self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
-        self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'])
+        self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], CMB_primaries = self.CMB_primaries)
 
         # default to full spectra
         if p['desired_spectra'] is None: 
-            p['desired_spectra'] = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
+            if self.CMB_primaries:
+                p['desired_spectra'] = [['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'ET', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
+            else: 
+                p['desired_spectra'] = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
 
         sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
-        self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs)
+        self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs, CMB_primaries = self.CMB_primaries)
         self.sliced_pairs = sliced_pairs
         
     # get parameter dictionary from a ccl cosmology (I usually pass cosmologies, not dictionaries)
@@ -2166,11 +2232,10 @@ class FisherForecaster:
         cosmology.compute_growth()
         p = self.survey_params
         
-        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
-            cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses']
-        )
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
-        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_kappa'])
+        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
+            cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses'], z_max = p['z_max'], n_chi=p['n_chi'])
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
+        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], p['cmb_noise_kappa'], cmb_noise_T = p['cmb_noise_T'], cmb_noise_E = p['cmb_noise_E'])
         full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'])
         
         if self.sliced_pairs is not None: 
@@ -2192,7 +2257,6 @@ class FisherForecaster:
 
     # manually compute derivatives
     def get_derivatives(self, desired_params):
-        #print("Getting derivatives...")
         C_derivatives = {}
         mu_derivatives = {}
         p = self.survey_params
