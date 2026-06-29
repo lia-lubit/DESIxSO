@@ -13,6 +13,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import scipy
+import pandas as pd
 from scipy.interpolate import interp1d
 from scipy.stats import linregress
 from scipy.integrate import simpson
