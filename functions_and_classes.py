@@ -915,8 +915,8 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
                 all_pairs.append(_canonicalize_pair(f'kappa_g{i}', f'kappa_g{j}'))
 
     if 'GL' in desired_spectra:
-        for i in range(1, n_source_bins + 1): # lens bins first, then lensing bins for cross
-            for j in range(1, n_lens_bins + 1):
+        for i in range(1, n_lens_bins + 1): # lens bins first, then lensing bins for cross
+            for j in range(1, n_source_bins + 1):
                 all_pairs.append(_canonicalize_pair(f'g{i}', f'kappa_g{j}'))
 
     if 'CG' in desired_spectra: # Lens Galaxy-CMB Lensing (from Lens galaxies to CMB lensing)
@@ -987,7 +987,7 @@ def build_covariance_from_data(
 ):
 
     full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs = None, cmb_primaries = cmb_primaries)
-
+    
     # Use the full range of unbinned ells for CCL calculations
     ells = np.arange(2, n_ell + 2)
     
@@ -1005,9 +1005,8 @@ def build_covariance_from_data(
     if desired_spectra is None:
         return full_cov, full_spectra_dict, full_f_map
     else:
-        #print("Slicing...")
         sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
-        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs)
+        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs, cmb_primaries=cmb_primaries)
         # Loop over full_spectra_dict to preserve its original, chronological block order
         sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
         sliced_cov = slice_matrix(full_cov, full_spectra_dict, full_f_map, binsize=binsize, desired_spectra=desired_spectra)
