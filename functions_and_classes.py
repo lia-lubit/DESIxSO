@@ -1534,10 +1534,7 @@ def instrument_Pk2D(pk2d_object):
 
 ## LIKELIHOODS 
 
-# make SO DESI Likelihood 
-# should work with or without emulator -- CHECK
-# the emulator needs to be used for the covariance matrix and data vector too, to ensure self-consistency
-#### ADD CMB PRIMARIES
+# SO DESI Likelihood (w/ or w/o emulator, w or w/o primaries) 
 class SO_x_DESI_Likelihood(Likelihood):
 
     params = {
@@ -1577,17 +1574,18 @@ class SO_x_DESI_Likelihood(Likelihood):
         self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses', 0.8)
         self.z_max = self.data_specs.get('z_max', 6)
         self.n_chi = self.data_specs.get('n_chi', 1024)
+        self.cmb_primaries = self.data_specs.get('cmb_primaries')
 
         # set desired spectra
         desired_spectra = self.data_specs.get('desired_spectra')
-        cmb_primaries = self.data_specs.get('cmb_primaries')
-        if desired_spectra:
+        if desired_spectra != 'None':
             self.desired_spectra = desired_spectra
-        elif cmb_primaries:
+        elif self.cmb_primaries:
             self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'ET', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
         else:
-            self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG'])
-
+            self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
+        print("Spectra considered: ", self.desired_spectra)
+        
         # noise parameters, loaded from files, with default 'None'
         shot_noise_path = self.data_specs.get('shot_noise_path')
         if shot_noise_path:
@@ -1655,8 +1653,7 @@ class SO_x_DESI_Likelihood(Likelihood):
             # the data vector and covariance are consistent with the current data_specs.
             num_lens_bins = self.lens_data.shape[1] - 1
             num_source_bins = self.source_data.shape[1] - 1
-            desired_pairs = create_simplified_desired_pairs(num_lens_bins, num_source_bins, 
-                                                            self.desired_spectra)
+            desired_pairs = create_simplified_desired_pairs(num_lens_bins, num_source_bins, self.desired_spectra)
             self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins, n_ell=self.n_ell,
                                      desired_pairs=desired_pairs, cmb_primaries = self.cmb_primaries)
 
@@ -1775,25 +1772,8 @@ class SO_x_DESI_Likelihood(Likelihood):
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE, cmb_noise_TE = self.cmb_noise_TE)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator, cmb_primaries = self.cmb_primaries)
 
-        #### KEEP EDITTING FROM HERE
         # flatten the current Cls into a model data vector 'M'
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-
-        for pair in self.f_map.pairs:
-            unbinned_cls = current_spectra_dict[pair]
-            binned_cls_for_pair = []
-            for i in range(0, self.n_ell, self.binsize):
-                end_idx = min(i + self.binsize, len(unbinned_cls))
-                if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                else:
-                    binned_cls_for_pair.append(0.0)
-
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
+        model_data_vector = build_data_vector(self.f_map, current_spectra_dict, self.n_ell, self.binsize)
 
         # calculate the difference vector (D - M(theta))
         difference_vector = self.observed_data_vector - model_data_vector
@@ -1818,7 +1798,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         wa = kwargs.get('wa', 0.0)
         Omega_k = kwargs.get('Omega_k', 0.0)
         
-        # 1. Initialize the cosmology using CCL
+        # Initialize the cosmology using CCL
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
             n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
@@ -1827,43 +1807,21 @@ class SO_x_DESI_Likelihood(Likelihood):
         )
         current_cosmology.compute_growth()
         
-        # 2. Build tracers and noise dictionaries
+        # Build tracers and noise dictionaries
         ells = np.arange(2, self.n_ell + 2)
-        lens_tracers, source_tracers, cmb_lensing_tracer = build_tracers_from_data(
-            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses
-        )
+        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
+            current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, self.cmb_noise_kk)
-        
-        # 3. Call your emulators via your spectra builder
-        current_spectra_dict = build_spectra_dict(
-            current_cosmology, self.f_map, tracer_dict, ells, noise_dict, 
-            linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator
-        )
-        
-        # 4. Flatten the current Cls into the binned model data vector 'M'
-        model_data_vector = np.array([])
-        num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
-        
-        for pair in self.f_map.pairs:
-            unbinned_cls = current_spectra_dict[pair]
-            binned_cls_for_pair = []
-            for i in range(0, self.n_ell, self.binsize):
-                end_idx = min(i + self.binsize, len(unbinned_cls))
-                if i < end_idx:
-                    binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-                else:
-                    binned_cls_for_pair.append(0.0)
-            
-            while len(binned_cls_for_pair) < num_binned_ells:
-                binned_cls_for_pair.append(0.0)
-                
-            model_data_vector = np.concatenate((model_data_vector, binned_cls_for_pair))
-        
-        # 5. Calculate the residual vector (D - M)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE, cmb_noise_TE = self.cmb_noise_TE)
+        current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator, cmb_primaries = self.cmb_primaries)
+
+        # flatten the current Cls into a model data vector 'M'
+        model_data_vector = build_data_vector(self.f_map, current_spectra_dict, self.n_ell, self.binsize)
+
+        # Calculate the residual vector (D - M)
         difference_vector = self.observed_data_vector - model_data_vector
         
-        # 6. Calculate Chi-squared: r^T * InvCov * r
+        # Calculate Chi-squared: r^T * InvCov * r
         chi2 = difference_vector.dot(self.inv_covariance.dot(difference_vector))
         
         return chi2

@@ -1,0 +1,135 @@
+#Cobaya!
+
+likelihood:
+  functions_and_classes.SO_x_DESI_Likelihood:
+    python_path: "likelihoods"
+
+    data_specs:
+      f_sky: 0.4
+      n_ell: 5000
+      binsize: 50
+      z_max: 6
+      n_chi: 1024
+      
+      # data
+      lens_data_path: data/DESI_lens_data_bin1.npy
+      source_data_path: data/HSC_dist_0_3_bin1.npy
+      shot_noise_path: data/DESI_shot_noise_bin1.npy
+      shape_noise_path: data/DESI_shape_noise_bin1.npy
+      cmb_noise_kk_path: data/SO_CMB_noise_kk.npy
+      cmb_noise_TT_path: data/SO_CMB_noise_TT.npy
+      cmb_noise_EE_path: data/SO_CMB_noise_EE.npy
+      cmb_noise_TE_path: data/SO_CMB_noise_TE.npy
+
+      data_vector_path: cobaya_data/emulated_full_spectrum_and_primaries_flat_LCDM_bin1_data_vector.npy
+      covariance_path: cobaya_data/emulated_full_spectrum_and_primaries_flat_LCDM_bin1_covariance_matrix.npy
+
+      magnification_bias_lenses: 0.8
+      desired_spectra: None
+      cmb_primaries: True
+
+      fiducial_cosmology_params:
+        Omega_c: 0.27
+        Omega_b: 0.045
+        h: 0.674
+        A_s: 2.105e-9
+        n_s: 0.96
+        w0: -1.0
+        wa: 0.0
+        Omega_k: 0.0
+
+# parameters
+params:
+
+  'Omega_m':
+    prior:
+         min: 0.265
+         max: 0.365
+    ref: 
+        dist: uniform
+        min: 0.295
+        max: 0.335
+    proposal: 0.005
+    latex: "\\Omega_m"
+
+  A_s: 2.105e-9
+  
+  # 'h':
+  #   prior:
+  #     dist: norm
+  #     loc: 0.67
+  #     scale: 0.03
+  #   ref: 0.67
+  #   proposal: 0.005
+  #   latex: "h"
+
+  h: 0.674
+
+  # 'Omega_b':
+  #   prior:
+  #     dist: norm
+  #     loc: 0.045
+  #     scale: 0.005
+  #   ref: 0.045
+  #   proposal: 0.001
+  #   latex: "\\Omega_b"
+
+  Omega_b: 0.045
+
+  # 'n_s':
+  #   prior:
+  #     dist: norm
+  #     loc: 0.96
+  #     scale: 0.02
+  #   ref: 0.96
+  #   proposal: 0.005
+  #   latex: "n_s"
+
+  n_s: 0.96
+
+  # 'w0':
+  #   prior:
+  #     dist: norm
+  #     loc: -1.0
+  #     scale: 0.1
+  #   ref: -1.0
+  #   proposal: 0.01
+  #   latex: "w_0"
+
+  w0: -1.0
+
+  # 'wa':
+  #   prior:
+  #     dist: norm
+  #     loc: 0.0
+  #     scale: 0.1
+  #   ref: 0.0
+  #   proposal: 0.05
+  #   latex: "w_a"
+
+  wa: 0.0
+
+  # 'Omega_k':
+  #   prior:
+  #     dist: norm
+  #     loc: 0.0
+  #     scale: 0.001
+  #   ref: 0.0
+  #   proposal: 0.001
+  #   latex: "\\Omega_k"
+
+  Omega_k: 0.0
+
+# sampler settingsF
+sampler:
+  mcmc:
+    Rminus1_stop: 0.01
+    max_samples: 20000
+    proposal_scale: 1.5
+    seed: 1234
+
+# theory
+theory: {}
+
+# result
+output: chains/emulated_flat_LCDM_bin1_omega_m_likelihood
