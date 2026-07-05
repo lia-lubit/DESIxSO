@@ -251,7 +251,9 @@ def calculate_and_plot_Cls(
     Pk2D_object = None,    # Pk2D object from emulator,
     plot = True,       # chose whether to plot
     plot_scaled = False, # decide whether to plot Cl or l(l+1)C_l/2pi
-    n_ell = 3000        # assume this value, change if needed
+    plot_linear = True,
+    l_min = 2,
+    n_ell = 3000
 ):
 
     ## LENSING SPECTRA
@@ -348,9 +350,10 @@ def calculate_and_plot_Cls(
         pars.InitPower.set_params(As=A_s, ns=n_s)
         pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='ppf')
         pars.set_for_lmax(l_max, lens_potential_accuracy=0)
-        
+
+        # return raw Cl not scaled Cl -- my code generally expects the raw values
         results = camb.get_results(pars)
-        powers = results.get_cmb_power_spectra(pars, CMB_unit='muK')
+        powers = results.get_cmb_power_spectra(pars, CMB_unit='muK', raw_cl=True)
         lensed_cls = powers['total']  
         cmb_map = {'TT': 0, 'EE': 1, 'BB': 2, 'TE': 3}
         
@@ -361,41 +364,46 @@ def calculate_and_plot_Cls(
     # plot
     if plot:
         plt.figure(figsize=(12, 8))
+        color_idx = 0
+        
+        valid = (ell_values >= l_min)
+        ell_filtered = ell_values[valid]
+        
         for key, cl_values in cl_spectra.items():
-            # Only plot points where Cl is strictly positive to prevent loglog plunging
-            
             if plot_scaled:
-                # Compute l*(l+1)*C_l / (2*pi)
                 scaled_factor = ell_values * (ell_values + 1) / (2 * np.pi)
                 y_values = cl_values * scaled_factor
+                ylabel = r'$D_\ell = \ell(\ell+1)C_\ell / 2\pi$'
             else:
                 y_values = cl_values
+                ylabel = r'Angular Power Spectrum, $C_\ell$'
 
-            # plot linear for TE, loglog for others
-            if 'TE' in key.upper():
-                print("TE spectrum is uniquely being plotted on a linear scale.")
-                print("")
-                plt.plot(ell_values, y_values, label=key, color=colors(color_idx % colors.N))
-            else:
-                valid = y_values > 0
-                plt.loglog(ell_values[valid], y_values[valid], label=key, color=colors(color_idx % colors.N))
-                
+            plt.plot(ell_filtered, y_values[valid], label=key, color=colors(color_idx % colors.N))
             color_idx += 1
-        plt.xlabel(r'Multipole, $\ell$')
-        
-        # Dynamically change the Y-axis label based on the flag
-        if plot_scaled:
-            plt.ylabel(r'$D_\ell = \ell(\ell+1)C_\ell / 2\pi$ $[\mu\text{K}^2]$')
-            plt.title(r'Scaled Angular Power Spectra ($D_\ell$)')
+
+        if plot_linear:
+            plt.xscale('linear')
+            plt.yscale('linear')
         else:
-            plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
-            plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '. join(correlation_types) + ' Correlations')
+            plt.xscale('log')
+            plt.yscale('log')
+
+        plt.xlim(2, n_ell)
+        plt.xlabel(r'Multipole, $\ell$')
+        plt.ylabel(ylabel)
+        
+        if plot_scaled:
+            plt.title(r'Scaled Angular Power Spectra ($D_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
+        else:
+            plt.title(r'Angular Power Spectra ($C_\ell$) for ' + ', '.join(correlation_types) + ' Correlations')
             
         plt.legend(loc='best', fontsize='small', bbox_to_anchor=(1.05, 1))
-
-    else: 
+        plt.grid(True, which="both", alpha=0.3)
+        plt.show()
         return cl_spectra
-
+    else:
+        return cl_spectra
+        
 # plot the covariance matrix, or a subset thereof
 # if no specific desired spectra are given, the whole matrix will be plotted
 #### CHECK
@@ -628,7 +636,7 @@ def plot_correlation_matrix(
     return correlation_matrix
 
 # helper function to plot spectra from the spectra_dict
-def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None):
+def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None, plot_scaled=False, plot_linear=True):
     if not spectra_dict:
         print("No spectra to plot.")
         return
@@ -665,21 +673,40 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
     # generate a colormap with enough colors for the filtered spectra
     colors = cm.get_cmap('tab10', len(spectra_to_plot_filtered))
     color_idx = 0
-
+    plt.figure(figsize=(12, 8))
+        
     for key, cl_values in spectra_to_plot_filtered.items():
-        plt.figure(figsize=(10, 6)) # New figure for each spectrum
-        # Use a consistent ell range for plotting
-        plt.loglog(ells, cl_values, label=f'C_l^{{{key[0]},{key[1]}}}', color=colors(color_idx % colors.N))
+        if plot_scaled:
+            scaled_factor = ells * (ells + 1) / (2 * np.pi)
+            y_values = cl_values * scaled_factor
+            ylabel = r'$D_\ell = \ell(\ell+1)C_\ell / 2\pi$'
+        else:
+            y_values = cl_values
+            ylabel = r'Angular Power Spectrum, $C_\ell$'
+
+        plt.plot(ells, y_values, label=f'C_l^{{{key[0]},{key[1]}}}', color=colors(color_idx % colors.N))
         color_idx += 1
 
+        if plot_linear:
+            plt.xscale('linear')
+            plt.yscale('linear')
+        else:
+            plt.xscale('log')
+            plt.yscale('log')
+        
+        if plot_scaled:
+            plt.title(r'Scaled Angular Power Spectra ($D_\ell$)')
+        else:
+            plt.title(r'Angular Power Spectra ($C_\ell$)')
+            
         plt.xlabel(r'Multipole, $\ell$')
-        plt.ylabel(r'Angular Power Spectrum, $C_\ell$')
-        plt.title(f'{title_prefix} for $C_l^{{{key[0]},{key[1]}}}$')
+        plt.ylabel(ylabel)
         plt.legend(loc='best', fontsize='small')
         plt.grid(True, which="both", ls="-")
         plt.tight_layout()
         plt.show()
-        
+
+
 ## Covariances etc
 
 # build data vector
@@ -842,15 +869,17 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         w0 = cosmo['w0']
         wa = cosmo['wa']
         l_max = np.max(ells)
-                
+
+        ##### CHECK
         pars = camb.CAMBparams()
-        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, mnu=0.06, omk=Omega_k)
+        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, omk=Omega_k)
         pars.InitPower.set_params(As=A_s, ns=n_s)
         pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='ppf')
         pars.set_for_lmax(l_max, lens_potential_accuracy=0)
-        
+
+        # return raw Cl not scaled Cl -- my code generally expects the raw values
         results = camb.get_results(pars)
-        powers = results.get_cmb_power_spectra(pars, CMB_unit='muK')
+        powers = results.get_cmb_power_spectra(pars, CMB_unit='muK', raw_cl=True)
         lensed_cls = powers['total']  
         camb_l = np.arange(lensed_cls.shape[0])
         cmb_map = {'TT': 0, 'EE': 1, 'BB': 2, 'TE': 3}
@@ -1920,7 +1949,9 @@ class FisherForecaster:
             final_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in self.sliced_pairs}
         else:
             final_spectra_dict = full_spectra_dict
-            
+
+        self.spectra_dict = final_spectra_dict
+        
         model_data_vector = []
         for pair in self.final_f_map.pairs:
             unbinned_cls = final_spectra_dict[pair]
