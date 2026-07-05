@@ -636,7 +636,7 @@ def plot_correlation_matrix(
     return correlation_matrix
 
 # helper function to plot spectra from the spectra_dict
-def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None, plot_scaled=False, plot_linear=True):
+def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None, plot_scaled=False, plot_linear=True, num_lens_bins = 0, num_source_bins = 0):
     if not spectra_dict:
         print("No spectra to plot.")
         return
@@ -649,22 +649,14 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
     # Determine which spectra to plot
     spectra_to_plot_filtered = {}
     if desired_spectra is None:
-        spectra_to_plot_filtered = spectra_dict # Plot all if none specified
+        spectra_to_plot_filtered = spectra_dict # plot all if none specified
     else:
-        for d_pair in desired_spectra:
-            # Canonicalize the desired pair to match spectra_dict keys
-            p1, p2 = d_pair
-            # Ensure consistent key ordering (e.g., ('g1', 'kappa_g1') instead of ('kappa_g1', 'g1'))
-            # This should match how build_spectra_dict stores Cls (lexicographical order)
-            if p1 < p2:
-                canonical_pair = (p1, p2)
+        my_desired_pairs = create_simplified_desired_pairs(num_lens_bins, num_source_bins, desired_spectra=desired_spectra)
+        for pair in my_desired_pairs:
+            if pair in spectra_dict:
+                spectra_to_plot_filtered[pair] = spectra_dict[pair]
             else:
-                canonical_pair = (p2, p1)
-
-            if canonical_pair in spectra_dict:
-                spectra_to_plot_filtered[canonical_pair] = spectra_dict[canonical_pair]
-            else:
-                print(f"Warning: Desired spectrum {d_pair} (canonical: {canonical_pair}) not found in spectra_dict. Skipping.")
+                print(f"Warning: Desired spectrum {pair} not found in spectra_dict. Skipping.")
 
     if not spectra_to_plot_filtered:
         print("No spectra found to plot after filtering.")
@@ -687,24 +679,24 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
         plt.plot(ells, y_values, label=f'C_l^{{{key[0]},{key[1]}}}', color=colors(color_idx % colors.N))
         color_idx += 1
 
-        if plot_linear:
-            plt.xscale('linear')
-            plt.yscale('linear')
-        else:
-            plt.xscale('log')
-            plt.yscale('log')
-        
-        if plot_scaled:
-            plt.title(r'Scaled Angular Power Spectra ($D_\ell$)')
-        else:
-            plt.title(r'Angular Power Spectra ($C_\ell$)')
+    if plot_linear:
+        plt.xscale('linear')
+        plt.yscale('linear')
+    else:
+        plt.xscale('log')
+        plt.yscale('log')
+    
+    if plot_scaled:
+        plt.title(r'Scaled Angular Power Spectra ($D_\ell$)')
+    else:
+        plt.title(r'Angular Power Spectra ($C_\ell$)')
             
-        plt.xlabel(r'Multipole, $\ell$')
-        plt.ylabel(ylabel)
-        plt.legend(loc='best', fontsize='small')
-        plt.grid(True, which="both", ls="-")
-        plt.tight_layout()
-        plt.show()
+    plt.xlabel(r'Multipole, $\ell$')
+    plt.ylabel(ylabel)
+    plt.legend(loc='best', fontsize='small')
+    plt.grid(True, which="both", ls="-")
+    plt.tight_layout()
+    plt.show()
 
 
 ## Covariances etc
@@ -962,7 +954,7 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
     if 'TT' in desired_spectra:
         all_pairs.append(('T', 'T'))
 
-    if 'ET' or 'TE' in desired_spectra:  
+    if 'ET' in desired_spectra or 'TE' in desired_spectra:        
         all_pairs.append(_canonicalize_pair('E', 'T'))
 
     if 'CE' in desired_spectra:  # CMB Lensing x CMB E-mode
