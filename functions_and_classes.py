@@ -136,7 +136,10 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         'w0': r'w_0',
         'h': r'h',
         'A_s': r'A_\mathrm{s}',
-        'n_s': r'n_\mathrm{s}'
+        'n_s': r'n_\mathrm{s}',
+        'Neff': r'N_\mathrm{eff}',
+        'm_nu': r'm_\mathrm{nu}',
+        'T_CMB': r'T_\mathrm{CMB}'
     }
     labels = [latex_labels.get(p, p) for p in sampled_params]
 
@@ -343,10 +346,18 @@ def calculate_and_plot_Cls(
         Omega_k = cosmology['Omega_k']
         w0 = cosmology['w0']
         wa = cosmology['wa']
+        Neff = cosmology['Neff']
+        m_nu = cosmology['m_nu']
+        T_CMB = cosmology['T_CMB']
         l_max = n_ell + 2
-                
+
+        # fix the error wherein it thinks m_nu etc is a list
+        m_nu = float(m_nu[0]) if isinstance(m_nu, (list, np.ndarray)) else float(m_nu)
+        Neff = float(Neff[0]) if isinstance(Neff, (list, np.ndarray)) else float(Neff)
+        T_CMB = float(T_CMB[0]) if isinstance(T_CMB, (list, np.ndarray)) else float(T_CMB)
+
         pars = camb.CAMBparams()
-        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, mnu=0.06, omk=Omega_k)
+        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, omk=Omega_k, mnu=m_nu, nnu=Neff, TCMB=T_CMB)
         pars.InitPower.set_params(As=A_s, ns=n_s)
         pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='ppf')
         pars.set_for_lmax(l_max, lens_potential_accuracy=0)
@@ -860,11 +871,19 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         Omega_k = cosmo['Omega_k']
         w0 = cosmo['w0']
         wa = cosmo['wa']
+        Neff = cosmo['Neff']
+        m_nu = cosmo['m_nu']
+        T_CMB = cosmo['T_CMB']
         l_max = np.max(ells)
+
+        # fix the error wherein it thinks m_nu etc is a list
+        m_nu = float(m_nu[0]) if isinstance(m_nu, (list, np.ndarray)) else float(m_nu)
+        Neff = float(Neff[0]) if isinstance(Neff, (list, np.ndarray)) else float(Neff)
+        T_CMB = float(T_CMB[0]) if isinstance(T_CMB, (list, np.ndarray)) else float(T_CMB)
 
         ##### CHECK
         pars = camb.CAMBparams()
-        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, omk=Omega_k)
+        pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, omk=Omega_k, mnu=m_nu, nnu=Neff, TCMB=T_CMB)
         pars.InitPower.set_params(As=A_s, ns=n_s)
         pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='ppf')
         pars.set_for_lmax(l_max, lens_potential_accuracy=0)
@@ -1119,7 +1138,10 @@ def extract_param_dict(cosmology):
     n_s = cosmology['n_s']
     w0 = cosmology['w0']
     wa = cosmology['wa']
-    Omega_k = cosmology['Omega_k']  # Added tracking for curvature
+    Omega_k = cosmology['Omega_k']  
+    Neff = cosmology['Neff']
+    m_nu = cosmology['m_nu']
+    T_CMB = cosmology['T_CMB']
     
     # Reconstruct Omega_m from cold dark matter and baryons
     Omega_m = Omega_c + Omega_b
@@ -1132,7 +1154,10 @@ def extract_param_dict(cosmology):
         'n_s':     n_s,
         'w0':      w0,
         'wa':      wa,
-        'Omega_k': Omega_k
+        'Omega_k': Omega_k,
+        'Neff': Neff,
+        'm_nu': m_nu,
+        'T_CMB': T_CMB,
     }
     
     return fiducial_params
@@ -1186,6 +1211,7 @@ def make_Pk2D(cosmology, linear_emulator, boost_emulator, z_arr, cmin, eta_0):
 # create a P(k) given a general cosmology
 # take in a cosmology, and emulator, and a z value and predict the P(k) using the emulator
 # output a 1D array or P(k) values for given k
+#### THIS DOES NOT ACCOUNT FOR DARK ENERGY, ETC
 def predict_linear_Pk(cosmology, emulator, z):
 
     h = cosmology.cosmo.params.h
@@ -1497,6 +1523,7 @@ class Pk2DTimer:
         return {"total_time_ns": self.total_time_spent, "call_count": self.call_count}
 
 # wrapper to get us information on the time taken to call the Pk2D object within PyCCL
+#### Fix if desired
 def instrument_Pk2D(pk2d_object):
     if not isinstance(pk2d_object, ccl.Pk2D):
         raise TypeError("pk2d_object must be an instance of ccl.Pk2D")
@@ -1566,6 +1593,9 @@ class SO_x_DESI_Likelihood(Likelihood):
         "w0": None,      # dark energy equation of state parameter
         "wa": None,      # dark energy equation of state parameter evolution
         "Omega_k": None, # curvature density (for curved LCDM) - will set to 0 for flat_LCDM
+        "Neff": None,     # effective number of massless neutrinos present -- defaults to 3.044
+        "m_nu": None,     # eass in eV of the massive neutrinos present
+        "T_CMB": None    # contemporary tempature of the CMB
     }
 
     # data-related settings, to be defined when configuring Cobaya
@@ -1690,14 +1720,17 @@ class SO_x_DESI_Likelihood(Likelihood):
             print("  No pre-computed data/covariance paths provided. Computing fiducial data and covariance...")
             fiducial_cosmo_input = self.data_specs.get('fiducial_cosmology_params', {})
 
-            _Omega_c = fiducial_cosmo_input.get('Omega_c', flat_LCDM_cosmology.cosmo.Omega_c())
-            _Omega_b = fiducial_cosmo_input.get('Omega_b', flat_LCDM_cosmology.cosmo.Omega_b())
-            _h = fiducial_cosmo_input.get('h', flat_LCDM_cosmology.cosmo['h'])
-            _A_s = fiducial_cosmo_input.get('A_s', flat_LCDM_cosmology.cosmo['A_s'])
-            _n_s = fiducial_cosmo_input.get('n_s', flat_LCDM_cosmology.cosmo['n_s'])
-            _w0 = fiducial_cosmo_input.get('w0', flat_LCDM_cosmology.cosmo['w0'])
-            _wa = fiducial_cosmo_input.get('wa', flat_LCDM_cosmology.cosmo['wa'])
-            _Omega_k = fiducial_cosmo_input.get('Omega_k', flat_LCDM_cosmology.cosmo['Omega_k'])
+            _Omega_c = fiducial_cosmo_input.get('Omega_c')
+            _Omega_b = fiducial_cosmo_input.get('Omega_b')
+            _h = fiducial_cosmo_input.get('h')
+            _A_s = fiducial_cosmo_input.get('A_s')
+            _n_s = fiducial_cosmo_input.get('n_s')
+            _w0 = fiducial_cosmo_input.get('w0')
+            _wa = fiducial_cosmo_input.get('wa')
+            _Omega_k = fiducial_cosmo_input.get('Omega_k')
+            _Neff = fiducial_cosmo_input.get('Neff')
+            _m_nu = fiducial_cosmo_input.get('m_nu')
+            _T_CMB = fiducial_cosmo_input.get('T_CMB')
 
             self.fiducial_cosmology = ccl.Cosmology(
                 Omega_c=_Omega_c,
@@ -1708,10 +1741,13 @@ class SO_x_DESI_Likelihood(Likelihood):
                 w0=_w0,
                 wa=_wa,
                 Omega_k=_Omega_k,
+                Neff=_Neff,
+                m_nu=_m_nu,
+                T_CMB=_T_CMB,
                 transfer_function='boltzmann_camb',
                 extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
-            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}")
+            print(f"  Fiducial Cosmology parameters: Omega_c={_Omega_c}, Omega_b={_Omega_b}, h={_h}, A_s={_A_s}, n_s={_n_s}, w0={_w0}, wa={_wa}, Omega_k={_Omega_k}, Neff = {_Neff}, m_nu={_m_nu}, T_CMB={_T_CMB}")
 
             self.fiducial_cosmology.compute_growth()
             
@@ -1764,6 +1800,9 @@ class SO_x_DESI_Likelihood(Likelihood):
         w0 = kwargs['w0']
         wa = kwargs['wa']
         Omega_k = kwargs['Omega_k']
+        Neff = kwargs['Neff']
+        m_nu = kwargs['m_nu']
+        T_CMB = kwargs['T_CMB']
         Omega_c = Omega_m - Omega_b
 
         if Omega_m < 0.1 or Omega_m > 0.6:
@@ -1778,6 +1817,9 @@ class SO_x_DESI_Likelihood(Likelihood):
             w0=w0,
             wa=wa,
             Omega_k=Omega_k,
+            Neff=Neff,
+            m_nu=m_nu,
+            T_CMB=T_CMB,
             transfer_function='boltzmann_camb',
             extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
@@ -1806,22 +1848,23 @@ class SO_x_DESI_Likelihood(Likelihood):
         return log_likelihood
     
     def profile_chi2(self, **kwargs):
-        # Pull parameters from kwargs or fall back to your fiducial specs
-        Omega_m = kwargs.get('Omega_m', 0.315)
-        Omega_b = kwargs.get('Omega_b', 0.045)
+        Omega_m = kwargs.get('Omega_m')
+        Omega_b = kwargs.get('Omega_b')
         Omega_c = Omega_m - Omega_b
-        
-        h = kwargs.get('h', 0.674)
-        A_s = kwargs.get('A_s', 2.105e-9)
-        n_s = kwargs.get('n_s', 0.96)
-        w0 = kwargs.get('w0', -1.0)
-        wa = kwargs.get('wa', 0.0)
-        Omega_k = kwargs.get('Omega_k', 0.0)
+        h = kwargs.get('h')
+        A_s = kwargs.get('A_s')
+        n_s = kwargs.get('n_s')
+        w0 = kwargs.get('w0')
+        wa = kwargs.get('wa')
+        Omega_k = kwargs.get('Omega_k')
+        Neff = kwargs.get('Neff')
+        m_nu = kwargs.get('m_nu')
+        T_CMB = kwargs.get('T_CMB')
         
         # Initialize the cosmology using CCL
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c, Omega_b=Omega_b, h=h, A_s=A_s, 
-            n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, 
+            n_s=n_s, w0=w0, wa=wa, Omega_k=Omega_k, Neff=Neff, m_nu=m_nu, T_CMB=T_CMB,
             transfer_function='boltzmann_camb',
             extra_parameters={"camb": {"dark_energy_model": "ppf"}}
         )
@@ -1873,7 +1916,8 @@ class FisherForecaster:
         
         # step sizes for numerical derivatives
         self.step_dict = step_dict if step_dict is not None else {
-            'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 'Omega_k': 1e-3
+            'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 
+            'Omega_k': 1e-3, 'Neff': 1e-3, 'm_nu': 1e-3, 'T_CMB': 1e-3 ### consider changing the last three
         }
         
         # extract and freeze our baseline fiducial truths
@@ -1910,6 +1954,9 @@ class FisherForecaster:
         w0 = cosmology['w0']
         wa = cosmology['wa']
         Omega_k = cosmology['Omega_k']
+        Neff = cosmology['Neff']
+        m_nu = cosmology['m_nu']
+        T_CMB = cosmology['T_CMB']
         
         return {
             'Omega_m': Omega_c + Omega_b,
@@ -1919,7 +1966,10 @@ class FisherForecaster:
             'n_s':     n_s,
             'w0':      w0,
             'wa':      wa,
-            'Omega_k': Omega_k
+            'Omega_k': Omega_k,
+            'Neff':    Neff,
+            'm_nu':    m_nu,
+            'T_CMB':   T_CMB
         }
 
     # build a data vector given parameters
@@ -1982,6 +2032,9 @@ class FisherForecaster:
                 w0      = params_up['w0'],
                 wa      = params_up['wa'],
                 Omega_k = params_up['Omega_k'],
+                Neff    = params_up['Neff'],
+                m_nu    = params_up['m_nu'],
+                T_CMB   = params_up['T_CMB'],
                 transfer_function = 'boltzmann_camb',
                 extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
@@ -1995,6 +2048,9 @@ class FisherForecaster:
                 w0      = params_down['w0'],
                 wa      = params_down['wa'],
                 Omega_k = params_down['Omega_k'],
+                Neff    = params_down['Neff'],
+                m_nu    = params_down['m_nu'],
+                T_CMB   = params_down['T_CMB'],
                 transfer_function = 'boltzmann_camb',
                 extra_parameters={"camb": {"dark_energy_model": "ppf"}}
             )
@@ -2017,7 +2073,7 @@ class FisherForecaster:
         
         # default to full Fisher matrix
         if desired_params is None:
-            desired_params = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k']
+            desired_params = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k', 'Neff', 'm_nu', 'T_CMB']
         
         self.desired_params = desired_params
         p = self.survey_params
@@ -2219,7 +2275,10 @@ class FisherForecaster:
                         'w0': r'w_0',
                         'h': r'h',
                         'A_s': r'A_\mathrm{s}',
-                        'n_s': r'n_\mathrm{s}'
+                        'n_s': r'n_\mathrm{s}',
+                        'Neff': r'N_\mathrm{eff}',
+                        'm_nu': r'm_\mathrm{nu}',
+                        'T_CMB': r'T_\mathrm{CMB}'
                     }
         labels = [latex_labels.get(p, p) for p in param_names]
 
@@ -2388,7 +2447,10 @@ class FisherForecaster:
             'h': r'h',
             'Omega_b': r'\Omega_b',
             'n_s': r'n_s',
-            'Omega_k': r'\Omega_k'
+            'Omega_k': r'\Omega_k',
+            'Neff': r'N_\mathrm{eff}',
+            'm_nu': r'm_\mathrm{nu}',
+            'T_CMB': r'T_\mathrm{CMB}'
         }
 
         # Quantitative Parameter Comparison (Table Output)
