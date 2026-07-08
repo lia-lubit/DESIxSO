@@ -298,7 +298,7 @@ def calculate_and_plot_Cls(
     cmb_lensing_tracer = ccl.CMBLensingTracer(cosmology, z_source=z_CMB)
 
     # define common range of multipoles and a dictionary
-    ell_values = np.logspace(np.log10(2), np.log10(n_ell + 2), int(n_ell / 10))
+    ell_values = np.logspace(np.log10(l_min), np.log10(n_ell + l_min), int(n_ell / 10))
     cl_spectra = {}
 
     # generate a colormap for distinct colors
@@ -359,7 +359,7 @@ def calculate_and_plot_Cls(
         Neff = cosmology['Neff']
         m_nu = cosmology['m_nu']
         T_CMB = cosmology['T_CMB']
-        l_max = n_ell + 2
+        l_max = n_ell + l_min
 
         # fix the error wherein it thinks m_nu etc is a list
         m_nu = float(m_nu[0]) if isinstance(m_nu, (list, np.ndarray)) else float(m_nu)
@@ -657,7 +657,7 @@ def plot_correlation_matrix(
     return correlation_matrix
 
 # helper function to plot spectra from the spectra_dict
-def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None, plot_scaled=False, plot_linear=True, num_lens_bins = 0, num_source_bins = 0):
+def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', desired_spectra=None, plot_scaled=False, plot_linear=True, num_lens_bins = 0, num_source_bins = 0, l_min = 2):
     if not spectra_dict:
         print("No spectra to plot.")
         return
@@ -665,7 +665,7 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
     # Get the ells from the first entry in spectra_dict
     # Assuming all spectra have the same ell values
     first_key = next(iter(spectra_dict))
-    ells = np.arange(2, len(spectra_dict[first_key]) + 2)
+    ells = np.arange(l_min, len(spectra_dict[first_key]) + l_min)
 
     # Determine which spectra to plot
     spectra_to_plot_filtered = {}
@@ -1019,6 +1019,7 @@ def build_covariance_from_data(
     lens_data,
     source_data,
     f_sky,
+    l_min=2,
     n_ell=3000, 
     binsize=1,  
     shot_noise_lens=None,
@@ -1036,10 +1037,10 @@ def build_covariance_from_data(
     n_chi=1024
 ):
 
-    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs = None, cmb_primaries = cmb_primaries)
+    full_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, l_min=l_min, n_ell=n_ell, desired_pairs = None, cmb_primaries = cmb_primaries)
     
     # Use the full range of unbinned ells for CCL calculations
-    ells = np.arange(2, n_ell + 2)
+    ells = np.arange(l_min, n_ell + l_min)
     
     cosmo.compute_growth()
     
@@ -1056,7 +1057,7 @@ def build_covariance_from_data(
         return full_cov, full_spectra_dict, full_f_map
     else:
         sliced_pairs = create_simplified_desired_pairs(lens_data.shape[1] - 1, source_data.shape[1] - 1, desired_spectra)
-        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, n_ell=n_ell, desired_pairs=sliced_pairs, cmb_primaries=cmb_primaries)
+        sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, l_min=l_min, n_ell=n_ell, desired_pairs=sliced_pairs, cmb_primaries=cmb_primaries)
         # Loop over full_spectra_dict to preserve its original, chronological block order
         sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
         sliced_cov = slice_matrix(full_cov, full_spectra_dict, full_f_map, binsize=binsize, desired_spectra=desired_spectra)
@@ -1276,9 +1277,10 @@ def predict_boost_Pk(cosmology, emulator, z, cmin, eta_0):
 # we need to figure out what spectra and spectra pairs must be calculated for any given data set and number of ells
 # the order of forecastmaps should be consistent across the board
 class ForecastMap:
-    def __init__(self, n_lens=4, n_src=4, n_ell=20, desired_pairs=None, cmb_primaries=False):
+    def __init__(self, n_lens=4, n_src=4, l_min=2, n_ell=3000, desired_pairs=None, cmb_primaries=False):
         self.n_lens = n_lens
         self.n_src = n_src
+        self.l_min = l_min
         self.n_ell = n_ell
         self.cmb_primaries = cmb_primaries
         
@@ -1412,6 +1414,7 @@ class CovarianceMatrix:
         self.binsize = binsize
 
         # N_ell from ForecastMap is the original, unbinned number of ell values
+        self.l_min = f_map.l_min
         self.N_ell_unbinned = f_map.n_ell
         self.N_ell_binned = int(np.ceil(self.N_ell_unbinned / self.binsize))
 
@@ -1428,7 +1431,7 @@ class CovarianceMatrix:
     # get the relevant C_l spectra
     def _compute_block(self, pair_A, pair_B):
         # ells from 2 to N_ell_unbinned + 1, so the indices i directly correspond to ell_values[i-2]
-        ells_unbinned = np.arange(2, self.N_ell_unbinned + 2)
+        ells_unbinned = np.arange(self.l_min, self.N_ell_unbinned + self.l_min)
 
         a, b = pair_A
         c, d = pair_B
@@ -1630,12 +1633,13 @@ class SO_x_DESI_Likelihood(Likelihood):
             self.boost_emulator = None
         
         # extract necessary data specifications from the Cobaya input YAML/dictionary
-        self.f_sky = self.data_specs.get('f_sky', 0.4) # default to 0.4 if not provided
-        self.n_ell = self.data_specs.get('n_ell', 3000) # max unbinned ell
-        self.binsize = self.data_specs.get('binsize', 50) # binning size for ell
-        self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses', 0.8)
-        self.z_max = self.data_specs.get('z_max', 6)
-        self.n_chi = self.data_specs.get('n_chi', 1024)
+        self.f_sky = self.data_specs.get('f_sky') # default to 0.4 if not provided
+        self.l_min = self.data_specs.get('l_min') # max unbinned ell
+        self.n_ell = self.data_specs.get('n_ell') # max unbinned ell
+        self.binsize = self.data_specs.get('binsize') # binning size for ell
+        self.magnification_bias_lenses = self.data_specs.get('magnification_bias_lenses')
+        self.z_max = self.data_specs.get('z_max')
+        self.n_chi = self.data_specs.get('n_chi')
         self.cmb_primaries = self.data_specs.get('cmb_primaries')
 
         # set desired spectra
@@ -1716,7 +1720,7 @@ class SO_x_DESI_Likelihood(Likelihood):
             num_lens_bins = self.lens_data.shape[1] - 1
             num_source_bins = self.source_data.shape[1] - 1
             desired_pairs = create_simplified_desired_pairs(num_lens_bins, num_source_bins, self.desired_spectra)
-            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins, n_ell=self.n_ell,
+            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins, l_min=self.l_min, n_ell=self.n_ell,
                                      desired_pairs=desired_pairs, cmb_primaries = self.cmb_primaries)
 
             # Verify compatibility (optional but good practice)
@@ -1770,6 +1774,7 @@ class SO_x_DESI_Likelihood(Likelihood):
                     self.lens_data,
                     self.source_data,
                     f_sky=self.f_sky,
+                    l_min=self.l_min,
                     n_ell=self.n_ell,
                     binsize=self.binsize,
                     shot_noise_lens=self.shot_noise_lens,
@@ -1839,7 +1844,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         current_cosmology.compute_growth()
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
-        ells = np.arange(2, self.n_ell + 2) # unbinned ells
+        ells = np.arange(self.l_min, self.n_ell + self.l_min) # unbinned ells
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
@@ -1883,7 +1888,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         current_cosmology.compute_growth()
         
         # Build tracers and noise dictionaries
-        ells = np.arange(2, self.n_ell + 2)
+        ells = np.arange(self.l_min, self.n_ell + self.l_min)
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
@@ -1905,7 +1910,7 @@ class SO_x_DESI_Likelihood(Likelihood):
 
 # Fisher Forecast class
 class FisherForecaster:
-    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
+    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, l_min = 2, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, cmb_noise_TE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024):
@@ -1918,7 +1923,7 @@ class FisherForecaster:
         self.n_chi = n_chi
     
         self.survey_params = {
-            'f_sky': f_sky, 'n_ell': n_ell, 'binsize': binsize,
+            'f_sky': f_sky, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
             'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE, 'cmb_noise_TE': cmb_noise_TE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
@@ -1942,11 +1947,9 @@ class FisherForecaster:
 
         # build full f_map, etc. so that I don't have to remake them every time I call build_theory_vector
         p = self.survey_params
-        self.ells = np.arange(2, p['n_ell'] + 2) 
-        ##### FINISH ADDING l_min, make sure FMap and CovMatrix can handle it
-        ##### ADD TO MCMC TOO
+        self.ells = np.arange(p['l_min'], p['l_min'] + p['n_ell']) 
         self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
-        self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], cmb_primaries = self.cmb_primaries)
+        self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, l_min=p['l_min'], n_ell=p['n_ell'], cmb_primaries = self.cmb_primaries)
 
         # default to full spectra
         if p['desired_spectra'] is None: 
@@ -1956,7 +1959,7 @@ class FisherForecaster:
                 p['desired_spectra'] = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
 
         sliced_pairs = create_simplified_desired_pairs(self.lens_data.shape[1] - 1, self.source_data.shape[1] - 1, p['desired_spectra'])
-        self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], desired_pairs=sliced_pairs, cmb_primaries = self.cmb_primaries)
+        self.final_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, l_min=p['l_min'], n_ell=p['n_ell'], desired_pairs=sliced_pairs, cmb_primaries = self.cmb_primaries)
         self.sliced_pairs = sliced_pairs
         
     # get parameter dictionary from a ccl cosmology (I usually pass cosmologies, not dictionaries)
