@@ -1905,7 +1905,7 @@ class SO_x_DESI_Likelihood(Likelihood):
 
 # Fisher Forecast class
 class FisherForecaster:
-    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, l_min = 2, n_ell=5000, binsize=50, 
+    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, cmb_noise_TE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024):
@@ -1918,7 +1918,7 @@ class FisherForecaster:
         self.n_chi = n_chi
     
         self.survey_params = {
-            'f_sky': f_sky, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
+            'f_sky': f_sky, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
             'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE, 'cmb_noise_TE': cmb_noise_TE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
@@ -1942,7 +1942,7 @@ class FisherForecaster:
 
         # build full f_map, etc. so that I don't have to remake them every time I call build_theory_vector
         p = self.survey_params
-        self.ells = np.arange(p['l_min'], p['n_ell'] + p['l_min']) 
+        self.ells = np.arange(2, p['n_ell'] + 2) 
         ##### FINISH ADDING l_min, make sure FMap and CovMatrix can handle it
         ##### ADD TO MCMC TOO
         self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
@@ -1964,6 +1964,7 @@ class FisherForecaster:
         h = cosmology['h']
         Omega_b = cosmology['Omega_b']
         Omega_c = cosmology['Omega_c']
+        Omega_m = cosmology['Omega_m']
         A_s = cosmology['A_s']
         n_s = cosmology['n_s']
         w0 = cosmology['w0']
@@ -1974,11 +1975,11 @@ class FisherForecaster:
         T_CMB = cosmology['T_CMB']
         
         return {
-            'Omega_m': Omega_c + Omega_b,
+            'Omega_m': Omega_m,
             'Omega_b': Omega_b,
             'Omega_c': Omega_c,
             'Omega_k': Omega_k,
-            'Omega_lambda': 1 - Omega_c - Omega_b - Omega_k,
+            'Omega_lambda': 1 - Omega_m - Omega_k,
             'h':       h,
             'A_s':     A_s,
             'n_s':     n_s,
@@ -2039,8 +2040,9 @@ class FisherForecaster:
             params_down[param] -= step
 
             # since I'm generally sampling over Omega_m, not Omega_c
-            ### I'm chanigng that for now to focus on omega_c
             # when taking derivatives and varying Omega_b I'll keep Omega_m constant by adjusting Omega_c under the hood
+            #### THIS IS A PROBLEM -- omega_m NEEDS TO BE ABLE TO VARY FREELY AND NOT CORRESPOND SIMPLY TO omega_c
+            ### RIGHT NOW VARYING OMEGA_M JUST MEANS VARYING OMEGA_C
             cosmology_up = ccl.Cosmology(
                 Omega_c = params_up['Omega_c'],
                 Omega_b = params_up['Omega_b'],
@@ -2091,7 +2093,7 @@ class FisherForecaster:
         
         # default to full Fisher matrix
         if desired_params is None:
-            desired_params = ['Omega_m', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k', 'Neff', 'm_nu', 'T_CMB']
+            desired_params = ['Omega_c', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k', 'Neff', 'm_nu', 'T_CMB']
         
         self.desired_params = desired_params
         p = self.survey_params
@@ -2137,85 +2139,51 @@ class FisherForecaster:
         
         return self.F, self.cov
 
-    # plot contours
-    def plot_contours(self, title="Fisher Forecast Contours"):
+    # compute partial derivative between paramaters for Jacobian
+    # derivative of param1 wrt param2
+    def get_partial_derivative(self, parameter1, parameter2):
 
-        if self.cov is None:
-            raise ValueError("You must execute make_fisher_matrix() before plotting!")
-            
-        n_params = len(self.desired_params)
-        fig, axes = plt.subplots(n_params, n_params, figsize=(2.5 * n_params, 2.5 * n_params))
-        if n_params == 1:
-            axes = np.array([[axes]])
-            
-        fig.suptitle(title, fontsize=14, y=1.02)
-        scale_68 = np.sqrt(2.30)
-        scale_95 = np.sqrt(6.18)
+        param1 = parameter1.lower()
+        param2 = parameter2.lower()
         
-        for i in range(n_params):
-            p_i = self.desired_params[i]
-            val_i = self.fiducial_dict[p_i]
-            sigma_i = np.sqrt(self.cov[i, i])
-            
-            for j in range(n_params):
-                p_j = self.desired_params[j]
-                val_j = self.fiducial_dict[p_j]
-                ax = axes[i, j]
+        if param1 == param2:
+            return 1
+
+        elif param2 == 'omega_m':
+            if param1 in ['omega_c', 'omega_b']:
+                return 1
                 
-                if j > i:
-                    ax.axis('off')
-                    continue
-                    
-                if i == j:
-                    x = np.linspace(val_i - 4 * sigma_i, val_i + 4 * sigma_i, 200)
-                    y = (1.0 / (sigma_i * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - val_i) / sigma_i) ** 2)
-                    ax.plot(x, y, color='firebrick', lw=2)
-                    ax.axvline(val_i, color='black', linestyle='--', alpha=0.6)
-                    ax.set_xlim(x[0], x[-1])
-                    ax.set_yticklabels([])
-                    ax.set_yticks([])
-                    if i == n_params - 1:
-                        ax.set_xlabel(p_i, fontsize=12)
-                    else:
-                        ax.set_xticklabels([])
-                        
-                else:
-                    sub_cov = self.cov[np.ix_([j, i], [j, i])]
-                    evals, evecs = np.linalg.eigh(sub_cov)
-                    order = evals.argsort()[::-1]
-                    evals, evecs = evals[order], evecs[:, order]
-                    angle = np.degrees(np.arctan2(evecs[1, 0], evecs[0, 0]))
-                    
-                    width_68 = 2 * scale_68 * np.sqrt(evals[0])
-                    height_68 = 2 * scale_68 * np.sqrt(evals[1])
-                    width_95 = 2 * scale_95 * np.sqrt(evals[0])
-                    height_95 = 2 * scale_95 * np.sqrt(evals[1])
-                    
-                    ellipse_95 = Ellipse(xy=(val_j, val_i), width=width_95, height=height_95, 
-                                         angle=angle, facecolor='firebrick', alpha=0.3, edgecolor='firebrick', lw=1)
-                    ax.add_patch(ellipse_95)
-                    
-                    ellipse_68 = Ellipse(xy=(val_j, val_i), width=width_68, height=height_68, 
-                                         angle=angle, facecolor='firebrick', alpha=0.6, edgecolor='firebrick', lw=1.5)
-                    ax.add_patch(ellipse_68)
-                    
-                    ax.plot(val_j, val_i, marker='x', color='black', markersize=6)
-                    sigma_j = np.sqrt(self.cov[j, j])
-                    ax.set_xlim(val_j - 3.5 * sigma_j, val_j + 3.5 * sigma_j)
-                    ax.set_ylim(val_i - 3.5 * sigma_i, val_i + 3.5 * sigma_i)
-                    
-                    if i == n_params - 1:
-                        ax.set_xlabel(p_j, fontsize=12)
-                    else:
-                        ax.set_xticklabels([])
-                    if j == 0:
-                        ax.set_ylabel(p_i, fontsize=12)
-                    else:
-                        ax.set_yticklabels([])
-                        
-        plt.tight_layout()
-        fig = plt.gcf() 
-        return fig
+        elif param2 == 'omega_lambda':
+            if param1 in ['omega_c', 'omega_b', 'omega_k']:
+                return -1
+                
+        else:
+            return 0
+            
+    # project matrix from one set of parameters to another
+    # e.g. omega_b omega_c omega_k to omega_b omega_m omega_k
+    def project_fisher_matrix(self, F_raw, sampled_params, plot_params):
+
+        print("WARNING: Our get_partial_derivative function is only equipped to handle omega_m, omega_b, omega_c, omega_k, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
+        
+        # if the bases are identical, no projection is needed
+        if list(sampled_params) == list(plot_params):
+            return F_raw
+
+        # build Jacobian matrix 
+        n_sampled = len(sampled_params)
+        n_plotted = len(plot_params)
+        J = np.zeros((n_sampled, n_plotted))
+        
+        for i in range(n_sampled):
+            for j in range(n_plotted):
+                # each entry is the partial derivative of the old parameter wrt the new parameter
+                J[i][j] = self.get_partial_derivative(sampled_params[i], plot_params[j])
+                
+        # Transform: F_new = J^T @ F_raw @ J
+        F_projected = J.T @ F_raw @ J
+    
+        return F_projected
 
     def sample_fisher_with_uniform_priors(self, uniform_priors=None, num_samples=200000):
         
@@ -2226,7 +2194,6 @@ class FisherForecaster:
         fiducial_values = [self.fiducial_dict[p] for p in self.desired_params]
         
         # draw rapid multivariate normal samples based on the Fisher covariance
-        #print(f"Generating {num_samples} mock samples from Fisher covariance...")
         samples = np.random.multivariate_normal(fiducial_values, self.cov, size=num_samples)
         
         # apply uniform prior cuts (mask out samples that exceed boundaries)
@@ -2239,31 +2206,37 @@ class FisherForecaster:
                     mask &= (samples[:, idx] >= p_min) & (samples[:, idx] <= p_max)
             
             samples = samples[mask]
-            #print(f"Uniform priors applied. Retained {len(samples)} valid samples.")
             
             if len(samples) == 0:
                 raise ValueError("Zero samples survived the uniform prior cuts. Check if your fiducial values sit outside your prior bounds!")
 
         # Convert into a GetDist MCSamples object for seamless plotting
         param_labels = [p for p in self.desired_params] 
-        
+
+        if uniform_priors is None:
+            name_tag = "Fisher (without priors)"
+        else:
+            name_tag = "Fisher (with uniform priors)"
+            
         mcsamples = MCSamples(
             samples=samples, 
             names=self.desired_params, 
             labels=param_labels, 
-            name_tag="Fisher (with Uniform Priors)"
+            name_tag=name_tag
         )
         
         return mcsamples
 
     # generate contour plot with or w/o Cobaya and prior-less version overlaid
     # for prior-less forecasts, make simple Gaussian ellipses instead of sampling
+    # if we want to plot paramaters that were not sampled over -- e.g. omega_m we'll need to convert
     def plot_with_cobaya_overlay(
         self, 
         param_names=None, 
         title="Fisher Forecast vs. Cobaya MCMC Constraints",
         cobaya_chain_dir=None, 
-        sampled_params=None, 
+        sampled_params=None, # the parameters sampled over, e.g. omega_k, omega_b, omega_c
+        plot_params=None,    # the parameters plotted, e.g. omega_k, omega_b, omega_m
         num_chains=4, 
         burn_in_fraction=0.2,
         uniform_priors=None,
@@ -2274,18 +2247,17 @@ class FisherForecaster:
         print_summary = False,
         plot_prior = False
     ):
-        from getdist.gaussian_mixtures import GaussianND
 
-        # if specified, plot only a subset of the forecast
-        # by default, plot full contour plot with every param from desired_params
-        if param_names is None:
-            param_names = self.desired_params
+        # Default fallback if parameters aren't provided
+        if sampled_params is None:
+            sampled_params = self.desired_params
+        if plot_params is None:
+            plot_params = sampled_params
             
-        plot_datasets = []
+        raw_datasets = []
         legend_labels = []
         contour_colors = []
 
-        # 1. Define clean LaTeX labels up front so all datasets can use them
         latex_labels = {'Omega_m': r'\Omega_\mathrm{m}',
                         'Omega_b': r'\Omega_\mathrm{b}',
                         'Omega_k': r'\Omega_\mathrm{k}',
@@ -2301,8 +2273,7 @@ class FisherForecaster:
                     }
         labels = [latex_labels.get(p, p) for p in param_names]
 
-        #### test this -- I'm a little concerned that the slicing might screw things up, 
-        #### but I know it's not nearly as sensitive as the MCMC in this regard
+        #### test -- concerned about slicing 
         # Helper to extract the correct sliced covariance matrix for GetDist
         def get_sliced_cov_and_fiducial():
             fiducial_values = [float(self.fiducial_dict[p]) for p in param_names]
@@ -2311,29 +2282,22 @@ class FisherForecaster:
             sliced_cov = self.cov[np.ix_(indices, indices)]
             return fiducial_values, sliced_cov
 
-        # 2. Get main Fisher results
-        if uniform_priors is None:
-            # Exact analytical Gaussian representation (No sampling noise!)
-            fiducial_values, sliced_cov = get_sliced_cov_and_fiducial()
-            fisher_dataset = GaussianND(fiducial_values, sliced_cov, names=param_names, labels=labels)
-        else:
-            # Fall back to sampling only if hard prior walls truncate the distribution
-            fisher_dataset = self.sample_fisher_with_uniform_priors(uniform_priors=uniform_priors, num_samples=num_samples)
-        
-        plot_datasets.append(fisher_dataset)
+        # Get main Fisher results
+        fisher_dataset = self.sample_fisher_with_uniform_priors(uniform_priors=uniform_priors, num_samples=num_samples)
+        raw_datasets.append(fisher_dataset)
         legend_labels.append("Fisher Forecast (With Priors)" if uniform_priors else "Fisher Forecast")
         contour_colors.append("firebrick")
 
-        # 3. Optional: Generate and overlay the exact prior-less Fisher distribution
+        # Optional: overlay the prior-less Fisher distribution
         if overlay_priorless and uniform_priors is not None:
             fiducial_values, sliced_cov = get_sliced_cov_and_fiducial()
+            ### GAUSSIANND OBJECT -- CHANGE
             fisher_priorless = GaussianND(fiducial_values, sliced_cov, names=param_names, labels=labels)
-            
-            plot_datasets.append(fisher_priorless)
+            raw_datasets.append(fisher_priorless)
             legend_labels.append("Fisher Forecast (No Priors)")
             contour_colors.append("gray")
         
-        # 4. Parse and load Cobaya chains if directory is given
+        # Optional: parse and load Cobaya chains if directory is given
         if cobaya_chain_dir is not None:
             if sampled_params is None:
                 sampled_params = param_names
@@ -2342,7 +2306,6 @@ class FisherForecaster:
             all_loglikes = []
             param_tracks = {p: [] for p in sampled_params}
             
-            #print(f"Processing {num_chains} Cobaya chains from: {cobaya_chain_dir}")
             for i in range(num_chains):
                 chain_path = os.path.join(cobaya_chain_dir, f"chain_task_{i}.txt")
                 if os.path.exists(chain_path):
@@ -2372,11 +2335,11 @@ class FisherForecaster:
                 settings={'ignore_rows': 0.0}
             )
             
-            plot_datasets.append(mcmc_samples)
+            raw_datasets.append(mcmc_samples)
             legend_labels.append("Cobaya MCMC")
             contour_colors.append("darkblue")
 
-        # 5. Optional: Sample from uniform priors and plot as a faint background layer
+        # Optional: Sample from uniform priors and plot as a faint background layer
         if plot_prior and uniform_priors is not None:
             
             # Generate uniform random samples covering the full prior range
@@ -2403,7 +2366,7 @@ class FisherForecaster:
             )
             
             # Insert it at the BEGINNING of your lists so it renders in the background
-            plot_datasets.insert(0, prior_dataset)
+            raw_datasets.insert(0, prior_dataset)
             legend_labels.insert(0, "Uniform Priors")
             contour_colors.insert(0, "lightgray") # Faint color
         
@@ -2415,15 +2378,79 @@ class FisherForecaster:
         fiducial_vals = {p: float(self.fiducial_dict[p]) for p in param_names if p in self.fiducial_dict}
 
         # Loop through each dataset and update the parameter labels manually
-        for dataset in plot_datasets:
+        for dataset in raw_datasets:
             for param_name, latex_string in latex_labels.items():
                 # Get the list of names and check using 'in'
                 if param_name in [p.name for p in dataset.paramNames.names]:
                     dataset.paramNames.parWithName(param_name).label = latex_string
-            
+
+        #### NEW -- CHECK
+        #### IS THIS REALLY SLOW?
+        # loop through datasets and convert from sampled_params to plot_params
+        ### 
+        print("Raw datasets: ", raw_datasets)
+        plot_datasets = []
+        raw_idx = {param: idx for idx, param in enumerate(sampled_params)}
+        
+        for dataset in raw_datasets:
+            # If it's the analytical Fisher forecast object (GaussianND), draw mock samples
+            if hasattr(dataset, 'sample'):
+                samples = dataset.sample(100000) 
+            else:
+                # If it's a loaded MCMC chain (MCSamples), read the raw samples directly
+                samples = dataset.samples
+                        
+            # Perform the column transformation if bases differ
+            if list(sampled_params) != list(plot_params):
+                projected_columns = []
+                for p in plot_params:
+                    
+                    if p.lower() == 'omega_m':
+                        b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
+                        c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
+                        projected_columns.append(samples[:, b_col] + samples[:, c_col])
+                        
+                    elif p.lower() == 'omega_lambda':
+                        b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
+                        c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
+                        k_col = raw_idx.get('omega_k') or raw_idx.get('Omega_k')
+                        
+                        # Fallback to 0 if omega_k isn't part of the sampled parameters
+                        k_samples = samples[:, k_col] if k_col is not None else 0.0
+                        
+                        projected_columns.append(1.0 - samples[:, b_col] - samples[:, c_col] - k_samples)
+                    else:
+                        projected_columns.append(samples[:, raw_idx[p]])
+                        
+                samples = np.column_stack(projected_columns)
+
+            # Package up into GetDist format
+            #### HOW DO I ADD A SUITABLE NAME TAG
+            ### ARE THE LABELS ETC STILL CORRECT? -- PROBABLY NOT, RIGHT?
+            mcsamples = MCSamples(
+                samples=samples, 
+                names=plot_params, 
+            )
+        
+            plot_datasets.append(mcsamples)
+        
+        # Rebuild markers dynamically to match your new plot basis columns
+        fiducial_vals = {}
+        for p in plot_params:
+            p_lower = p.lower()
+            if p_lower == 'omega_m':
+                fiducial_vals[p] = float(self.fiducial_dict['Omega_b']) + float(self.fiducial_dict['Omega_c'])
+            elif p_lower == 'omega_lambda':
+                b_val = float(self.fiducial_dict['Omega_b'])
+                c_val = float(self.fiducial_dict['Omega_c'])
+                k_val = float(self.fiducial_dict.get('Omega_k', 0.0))
+                fiducial_vals[p] = 1.0 - b_val - c_val - k_val
+            elif p in self.fiducial_dict:
+                fiducial_vals[p] = float(self.fiducial_dict[p])
+        
         g.triangle_plot(
             plot_datasets,
-            params=param_names,
+            params=plot_params,
             filled=True,
             contour_colors=contour_colors,
             legend_labels=legend_labels,
@@ -2431,10 +2458,7 @@ class FisherForecaster:
             title_limit=None
         )
         
-       # Add a beautifully placed global title that stays independent of the plots
         if g.subplots is not None and g.subplots.size > 0:
-            # figtext uses overall canvas coordinates (0 to 1). 
-            # x=0.15 aligns it beautifully with the left edge of the staggered grid.
             plt.subplots_adjust(top = 0.85)
             plt.figtext(0.15, 1, title, fontsize=16, ha='left', va='bottom')
             
@@ -2444,7 +2468,6 @@ class FisherForecaster:
                 os.makedirs(plot_folder)
                 print(f"Created directory: {plot_folder}")
             
-            # Format a clean filename from the given title (lowercase, no spaces/punctuation)
             clean_filename = title.lower().replace(" ", "_").replace(".", "").replace(",", "") + ".pdf"
             full_save_path = os.path.join(plot_folder, clean_filename)
             
@@ -2474,6 +2497,7 @@ class FisherForecaster:
             'T_CMB': r'T_\mathrm{CMB}'
         }
 
+        ##### MODIFY TO PRINT PLOTTED PARAMS
         # Quantitative Parameter Comparison (Table Output)
         if print_summary:
             # Initialize the single master table header
@@ -2517,7 +2541,7 @@ class FisherForecaster:
                         dec = 4 if sig < 0.01 else 3 
                         return f"{val:.{dec}f} \\pm {sig:.{dec}f}"
 
-                for dataset, label in zip(plot_datasets, legend_labels):
+                for dataset, label in zip(raw_datasets, legend_labels):
                     
                     # --- CASE 1: Analytical Covariance Matrix for the Prior-less Forecast ---
                     if label == "Fisher Forecast (No Priors)":
