@@ -92,6 +92,15 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         elif p == 'Omega_m' and 'Omega_c' in fiducial_block and 'Omega_b' in fiducial_block:
             fiducial_vals['Omega_m'] = float(fiducial_block['Omega_c']) + float(fiducial_block['Omega_b'])
             print(f"Derived fiducial Omega_m = Omega_c + Omega_b = {fiducial_vals['Omega_m']:.4f}")
+        elif p == 'Omega_lambda':
+                # Dynamically fetch or derive Omega_m first
+                if 'Omega_m' in fiducial_block:
+                    om = float(fiducial_block['Omega_m'])
+                elif 'Omega_c' in fiducial_block and 'Omega_b' in fiducial_block:
+                    om = float(fiducial_block['Omega_c']) + float(fiducial_block['Omega_b'])
+                # Fetch Omega_k if it exists, otherwise default to flat universe (0.0)
+                ok = float(fiducial_block.get('Omega_k'))
+                fiducial_vals['Omega_lambda'] = 1.0 - om - ok
         else:
             print(f"Warning: Could not resolve fiducial value for '{p}'. Setting default to 0.0.")
             fiducial_vals[p] = 0.0
@@ -131,6 +140,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
     latex_labels = {
         'Omega_m': r'\Omega_\mathrm{m}',
         'Omega_b': r'\Omega_\mathrm{b}',
+        'Omega_lambda': r'\Omega_\mathrm{lambda}',
         'Omega_k': r'\Omega_\mathrm{k}',
         'wa': r'w_a',
         'w0': r'w_0',
@@ -1143,12 +1153,14 @@ def extract_param_dict(cosmology):
     m_nu = cosmology['m_nu']
     T_CMB = cosmology['T_CMB']
     
-    # Reconstruct Omega_m from cold dark matter and baryons
+    # Reconstruct Omega_m and Omega_lambda from cold dark matter and baryons
     Omega_m = Omega_c + Omega_b
+    Omega_lambda = 1 - Omega_m - Omega_k
     
     fiducial_params = {
         'Omega_m': Omega_m,
         'Omega_b': Omega_b,
+        'Omega_lambda': Omega_lambda,
         'h':       h,
         'A_s':     A_s,
         'n_s':     n_s,
@@ -1893,7 +1905,7 @@ class SO_x_DESI_Likelihood(Likelihood):
 
 # Fisher Forecast class
 class FisherForecaster:
-    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, n_ell=5000, binsize=50, 
+    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, l_min = 2, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, cmb_noise_TE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024):
@@ -1906,7 +1918,7 @@ class FisherForecaster:
         self.n_chi = n_chi
     
         self.survey_params = {
-            'f_sky': f_sky, 'n_ell': n_ell, 'binsize': binsize,
+            'f_sky': f_sky, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
             'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE, 'cmb_noise_TE': cmb_noise_TE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
@@ -1917,7 +1929,8 @@ class FisherForecaster:
         # step sizes for numerical derivatives
         self.step_dict = step_dict if step_dict is not None else {
             'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 
-            'Omega_k': 1e-3, 'Neff': 1e-3, 'm_nu': 1e-3, 'T_CMB': 1e-3 ### consider changing the last three
+            'Omega_c': 1e-4, 'Omega_k': 1e-3, 'Neff': 1e-3, 'm_nu': 1e-3, 'T_CMB': 1e-3, 'Omega_lambda': 1e-3 
+            ### consider changing the last four, I put these as temp values
         }
         
         # extract and freeze our baseline fiducial truths
@@ -1929,7 +1942,9 @@ class FisherForecaster:
 
         # build full f_map, etc. so that I don't have to remake them every time I call build_theory_vector
         p = self.survey_params
-        self.ells = np.arange(2, p['n_ell'] + 2)
+        self.ells = np.arange(p['l_min'], p['n_ell'] + p['l_min']) 
+        ##### FINISH ADDING l_min, make sure FMap and CovMatrix can handle it
+        ##### ADD TO MCMC TOO
         self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
         self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, n_ell=p['n_ell'], cmb_primaries = self.cmb_primaries)
 
@@ -1961,12 +1976,14 @@ class FisherForecaster:
         return {
             'Omega_m': Omega_c + Omega_b,
             'Omega_b': Omega_b,
+            'Omega_c': Omega_c,
+            'Omega_k': Omega_k,
+            'Omega_lambda': 1 - Omega_c - Omega_b - Omega_k,
             'h':       h,
             'A_s':     A_s,
             'n_s':     n_s,
             'w0':      w0,
             'wa':      wa,
-            'Omega_k': Omega_k,
             'Neff':    Neff,
             'm_nu':    m_nu,
             'T_CMB':   T_CMB
@@ -2022,16 +2039,17 @@ class FisherForecaster:
             params_down[param] -= step
 
             # since I'm generally sampling over Omega_m, not Omega_c
+            ### I'm chanigng that for now to focus on omega_c
             # when taking derivatives and varying Omega_b I'll keep Omega_m constant by adjusting Omega_c under the hood
             cosmology_up = ccl.Cosmology(
-                Omega_c = params_up['Omega_m'] - params_up['Omega_b'],
+                Omega_c = params_up['Omega_c'],
                 Omega_b = params_up['Omega_b'],
+                Omega_k = params_up['Omega_k'],
                 h       = params_up['h'],
                 A_s     = params_up['A_s'],
                 n_s     = params_up['n_s'],
                 w0      = params_up['w0'],
                 wa      = params_up['wa'],
-                Omega_k = params_up['Omega_k'],
                 Neff    = params_up['Neff'],
                 m_nu    = params_up['m_nu'],
                 T_CMB   = params_up['T_CMB'],
@@ -2040,14 +2058,14 @@ class FisherForecaster:
             )
             
             cosmology_down = ccl.Cosmology(
-                Omega_c = params_down['Omega_m'] - params_down['Omega_b'],
+                Omega_c = params_down['Omega_c'],
                 Omega_b = params_down['Omega_b'],
+                Omega_k = params_down['Omega_k'],
                 h       = params_down['h'],
                 A_s     = params_down['A_s'],
                 n_s     = params_down['n_s'],
                 w0      = params_down['w0'],
                 wa      = params_down['wa'],
-                Omega_k = params_down['Omega_k'],
                 Neff    = params_down['Neff'],
                 m_nu    = params_down['m_nu'],
                 T_CMB   = params_down['T_CMB'],
@@ -2271,6 +2289,7 @@ class FisherForecaster:
         latex_labels = {'Omega_m': r'\Omega_\mathrm{m}',
                         'Omega_b': r'\Omega_\mathrm{b}',
                         'Omega_k': r'\Omega_\mathrm{k}',
+                        'Omeag_c': r'\Omega_\mathrm{c}',
                         'wa': r'w_a',
                         'w0': r'w_0',
                         'h': r'h',
@@ -2445,9 +2464,11 @@ class FisherForecaster:
             'w0': r'w_0',
             'wa': r'w_a',
             'h': r'h',
-            'Omega_b': r'\Omega_b',
+            'Omega_b': r'\Omega_{b}',
+            'Omega_c': r'\Omega_{c}',
             'n_s': r'n_s',
             'Omega_k': r'\Omega_k',
+            'Omega_lambda': r'\Omega_{\lambda}',
             'Neff': r'N_\mathrm{eff}',
             'm_nu': r'm_\mathrm{nu}',
             'T_CMB': r'T_\mathrm{CMB}'
