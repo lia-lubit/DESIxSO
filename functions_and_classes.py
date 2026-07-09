@@ -2381,26 +2381,36 @@ class FisherForecaster:
             if list(self.desired_params) != list(plot_params):
                 projected_columns = []
                 for p in plot_params:
-                    
+                    chain_length = samples.shape[0]                    
                     if p.lower() == 'omega_m':
                         b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
                         c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
-                        b_samples = samples[:, b_col] if b_col is not None else self.cosmology['Omega_b']
-                        c_samples = samples[:, c_col] if c_col is not None else self.cosmology['Omega_c']
-                        
-                        projected_columns.append(b_samples + c_samples)
+                        m_nu_col = raw_idx.get('m_nu')
+                        h_col = raw_idx.get('h')
+
+                        b_samples = samples[:, b_col] if b_col is not None else np.full(chain_length, self.cosmology['Omega_b'])
+                        c_samples = samples[:, c_col] if c_col is not None else np.full(chain_length, self.cosmology['Omega_c'])
+                        m_nu_samples = samples[:, m_nu_col] if m_nu_col is not None else np.full(chain_length, np.sum(self.cosmology['m_nu']))
+                        h_samples = samples[:, h_col] if h_col is not None else np.full(chain_length, self.cosmology['h'])
+                        Omega_nu_samples = m_nu_samples / (h_samples * h_samples * 93.15) #### CHECK
+
+                        projected_columns.append(b_samples + c_samples + Omega_nu_samples)
                         
                     elif p.lower() == 'omega_lambda':
                         b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
                         c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
                         k_col = raw_idx.get('omega_k') or raw_idx.get('Omega_k')
+                        m_nu_col = raw_idx.get('m_nu')
+                        h_col = raw_idx.get('h')
                         
-                        # Fallback to 0 if omega_k isn't part of the sampled parameters
-                        b_samples = samples[:, b_col] if b_col is not None else self.cosmology['Omega_b']
-                        c_samples = samples[:, c_col] if c_col is not None else self.cosmology['Omega_c']
-                        k_samples = samples[:, k_col] if k_col is not None else self.cosmology['Omega_k']
+                        b_samples = samples[:, b_col] if b_col is not None else np.full(chain_length, self.cosmology['Omega_b'])
+                        c_samples = samples[:, c_col] if c_col is not None else np.full(chain_length, self.cosmology['Omega_c'])
+                        k_samples = samples[:, k_col] if k_col is not None else np.full(chain_length, self.cosmology['Omega_k'])
+                        m_nu_samples = samples[:, m_nu_col] if m_nu_col is not None else np.full(chain_length, np.sum(self.cosmology['m_nu']))
+                        h_samples = samples[:, h_col] if h_col is not None else np.full(chain_length, self.cosmology['h'])
+                        Omega_nu_samples = m_nu_samples / (h_samples * h_samples * 93.15) #### CHECK
                         
-                        projected_columns.append(1.0 - b_samples - c_samples - k_samples)
+                        projected_columns.append(1.0 - b_samples - c_samples - k_samples - Omega_nu_samples)
                     else:
                         projected_columns.append(samples[:, raw_idx[p]])
                         
