@@ -1968,6 +1968,7 @@ class FisherForecaster:
         Omega_b = cosmology['Omega_b']
         Omega_c = cosmology['Omega_c']
         Omega_m = cosmology['Omega_m']
+        Omega_lambda = 1 - cosmology['Omega_m'] - cosmology['Omega_k']
         A_s = cosmology['A_s']
         n_s = cosmology['n_s']
         w0 = cosmology['w0']
@@ -2042,10 +2043,8 @@ class FisherForecaster:
             params_up[param] += step
             params_down[param] -= step
 
-            # since I'm generally sampling over Omega_m, not Omega_c
-            # when taking derivatives and varying Omega_b I'll keep Omega_m constant by adjusting Omega_c under the hood
-            #### THIS IS A PROBLEM -- omega_m NEEDS TO BE ABLE TO VARY FREELY AND NOT CORRESPOND SIMPLY TO omega_c
-            ### RIGHT NOW VARYING OMEGA_M JUST MEANS VARYING OMEGA_C
+            # I'll vary the fundamental pyccl/camb parameters 
+            # and then at the end get from those parameters to the derived ones
             cosmology_up = ccl.Cosmology(
                 Omega_c = params_up['Omega_c'],
                 Omega_b = params_up['Omega_b'],
@@ -2114,7 +2113,8 @@ class FisherForecaster:
         n_params = len(desired_params)
         F = np.zeros((n_params, n_params))
         inv_C = np.linalg.inv(C)
-        
+
+        ##### CHECK
         for i, p_i in enumerate(desired_params):
             for j, p_j in enumerate(desired_params):
                 dC_di = C_derivatives[p_i]
@@ -2165,23 +2165,23 @@ class FisherForecaster:
             
     # project matrix from one set of parameters to another
     # e.g. omega_b omega_c omega_k to omega_b omega_m omega_k
-    def project_fisher_matrix(self, F_raw, sampled_params, plot_params):
+    def project_fisher_matrix(self, F_raw, plot_params):
 
         print("WARNING: Our get_partial_derivative function is only equipped to handle omega_m, omega_b, omega_c, omega_k, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
         
         # if the bases are identical, no projection is needed
-        if list(sampled_params) == list(plot_params):
+        if list(self.desired_params) == list(plot_params):
             return F_raw
 
         # build Jacobian matrix 
-        n_sampled = len(sampled_params)
+        n_sampled = len(self.desired_params)
         n_plotted = len(plot_params)
         J = np.zeros((n_sampled, n_plotted))
         
         for i in range(n_sampled):
             for j in range(n_plotted):
                 # each entry is the partial derivative of the old parameter wrt the new parameter
-                J[i][j] = self.get_partial_derivative(sampled_params[i], plot_params[j])
+                J[i][j] = self.get_partial_derivative(self.desired_params[i], plot_params[j])
                 
         # Transform: F_new = J^T @ F_raw @ J
         F_projected = J.T @ F_raw @ J
@@ -2231,14 +2231,11 @@ class FisherForecaster:
         return mcsamples
 
     # generate contour plot with or w/o Cobaya and prior-less version overlaid
-    # for prior-less forecasts, make simple Gaussian ellipses instead of sampling
     # if we want to plot paramaters that were not sampled over -- e.g. omega_m we'll need to convert
     def plot_with_cobaya_overlay(
         self, 
-        param_names=None, 
         title="Fisher Forecast vs. Cobaya MCMC Constraints",
         cobaya_chain_dir=None, 
-        sampled_params=None, # the parameters sampled over, e.g. omega_k, omega_b, omega_c
         plot_params=None,    # the parameters plotted, e.g. omega_k, omega_b, omega_m
         num_chains=4, 
         burn_in_fraction=0.2,
@@ -2251,11 +2248,9 @@ class FisherForecaster:
         plot_prior = False
     ):
 
-        # Default fallback if parameters aren't provided
-        if sampled_params is None:
-            sampled_params = self.desired_params
+        # fall back to plotting the parameters sampled over
         if plot_params is None:
-            plot_params = sampled_params
+            plot_params = self.desired_params
             
         raw_datasets = []
         legend_labels = []
@@ -2264,7 +2259,8 @@ class FisherForecaster:
         latex_labels = {'Omega_m': r'\Omega_\mathrm{m}',
                         'Omega_b': r'\Omega_\mathrm{b}',
                         'Omega_k': r'\Omega_\mathrm{k}',
-                        'Omeag_c': r'\Omega_\mathrm{c}',
+                        'Omega_c': r'\Omega_\mathrm{c}',
+                        'Omega_lambda': r'\Omega_\mathrm{\Lambda}',
                         'wa': r'w_a',
                         'w0': r'w_0',
                         'h': r'h',
@@ -2274,16 +2270,7 @@ class FisherForecaster:
                         'm_nu': r'm_\mathrm{nu}',
                         'T_CMB': r'T_\mathrm{CMB}'
                     }
-        labels = [latex_labels.get(p, p) for p in param_names]
-
-        #### test -- concerned about slicing 
-        # Helper to extract the correct sliced covariance matrix for GetDist
-        def get_sliced_cov_and_fiducial():
-            fiducial_values = [float(self.fiducial_dict[p]) for p in param_names]
-            # Ensure we pull indices corresponding to the selected param_names
-            indices = [self.desired_params.index(p) for p in param_names]
-            sliced_cov = self.cov[np.ix_(indices, indices)]
-            return fiducial_values, sliced_cov
+        labels = [latex_labels.get(p, p) for p in plot_params]
 
         # Get main Fisher results
         fisher_dataset = self.sample_fisher_with_uniform_priors(uniform_priors=uniform_priors, num_samples=num_samples)
@@ -2291,23 +2278,19 @@ class FisherForecaster:
         legend_labels.append("Fisher Forecast (With Priors)" if uniform_priors else "Fisher Forecast")
         contour_colors.append("firebrick")
 
-        # Optional: overlay the prior-less Fisher distribution
+        # Optional: overlay the prior-less Fisher distribution (if the main Fisher is not prior-less)
         if overlay_priorless and uniform_priors is not None:
-            fiducial_values, sliced_cov = get_sliced_cov_and_fiducial()
-            ### GAUSSIANND OBJECT -- CHANGE
-            fisher_priorless = GaussianND(fiducial_values, sliced_cov, names=param_names, labels=labels)
+            fisher_priorless = self.sample_fisher_with_uniform_priors(uniform_priors=None, num_samples=num_samples)
             raw_datasets.append(fisher_priorless)
             legend_labels.append("Fisher Forecast (No Priors)")
             contour_colors.append("gray")
         
         # Optional: parse and load Cobaya chains if directory is given
         if cobaya_chain_dir is not None:
-            if sampled_params is None:
-                sampled_params = param_names
                 
             all_weights = []
             all_loglikes = []
-            param_tracks = {p: [] for p in sampled_params}
+            param_tracks = {p: [] for p in plot_params}
             
             for i in range(num_chains):
                 chain_path = os.path.join(cobaya_chain_dir, f"chain_task_{i}.txt")
@@ -2317,7 +2300,7 @@ class FisherForecaster:
                     
                     all_weights.append(data[burn:, 0])
                     all_loglikes.append(data[burn:, 1])
-                    for idx, param in enumerate(sampled_params):
+                    for idx, param in enumerate(plot_params):
                         col_idx = idx + 2  # Skip weight and loglike columns
                         param_tracks[param].append(data[burn:, col_idx])
                 else:
@@ -2326,14 +2309,14 @@ class FisherForecaster:
             if len(all_weights) == 0:
                 raise FileNotFoundError(f"No valid chain files found in {cobaya_chain_dir}")
                 
-            combined_samples = np.column_stack([np.concatenate(param_tracks[p]) for p in sampled_params])
-            cobaya_labels = [latex_labels.get(p, p) for p in sampled_params]
+            combined_samples = np.column_stack([np.concatenate(param_tracks[p]) for p in plot_params])
+            cobaya_labels = [latex_labels.get(p, p) for p in plot_params]
             
             mcmc_samples = MCSamples(
                 samples=combined_samples,
                 weights=np.concatenate(all_weights),
                 loglikes=np.concatenate(all_loglikes),
-                names=sampled_params,
+                names=plot_params,
                 labels=cobaya_labels,
                 settings={'ignore_rows': 0.0}
             )
@@ -2347,23 +2330,20 @@ class FisherForecaster:
             
             # Generate uniform random samples covering the full prior range
             prior_samples_dict = {}
-            for p in param_names:
+            for p in plot_params:
                 if p in uniform_priors:
                     p_min, p_max = uniform_priors[p]
-                    # Match the exact number of samples for smooth shading
                     prior_samples_dict[p] = np.random.uniform(p_min, p_max, size=num_samples)
                 else:
-                    # Fallback if a parameter doesn't have an explicit prior bound defined
-                    # (e.g., grab its current axes limits or use a wide placeholder)
+                    #### WHAT DO I DO IF ITS NOT IN UNIFORM_PRIORS -- I DON'T WANT TO SHOW PRIORS WHERE THEY DON'T EXIST
                     fiducial = float(self.fiducial_dict[p])
                     prior_samples_dict[p] = np.random.uniform(fiducial * 0.5, fiducial * 1.5, size=num_samples)
                     
             prior_df = pd.DataFrame(prior_samples_dict)
             
-            # Turn it into a GetDist MCSamples dataset
             prior_dataset = MCSamples(
                 samples=prior_df.values, 
-                names=param_names, 
+                names=plot_params, 
                 labels=labels, 
                 name_tag="Uniform Priors"
             )
@@ -2371,16 +2351,17 @@ class FisherForecaster:
             # Insert it at the BEGINNING of your lists so it renders in the background
             raw_datasets.insert(0, prior_dataset)
             legend_labels.insert(0, "Uniform Priors")
-            contour_colors.insert(0, "lightgray") # Faint color
+            contour_colors.insert(0, "lightgray") 
         
-        # 5. Create GetDist Subplot Plotter and generate the grid
-        n_params = len(param_names)
+        # Create GetDist Subplot Plotter and generate the grid
+        n_params = len(plot_params)
         g = plots.get_subplot_plotter(width_inch=2.5 * n_params)
         
         # Extract fiducial values in correct order for markers
-        fiducial_vals = {p: float(self.fiducial_dict[p]) for p in param_names if p in self.fiducial_dict}
+        fiducial_vals = {p: float(self.fiducial_dict[p]) for p in plot_params if p in self.fiducial_dict}
 
         # Loop through each dataset and update the parameter labels manually
+        ##### FIX THIS
         for dataset in raw_datasets:
             for param_name, latex_string in latex_labels.items():
                 # Get the list of names and check using 'in'
@@ -2389,29 +2370,25 @@ class FisherForecaster:
 
         #### NEW -- CHECK
         #### IS THIS REALLY SLOW?
-        # loop through datasets and convert from sampled_params to plot_params
-        ### 
-        print("Raw datasets: ", raw_datasets)
+        # loop through datasets and convert from self.desired_params to plot_params
         plot_datasets = []
-        raw_idx = {param: idx for idx, param in enumerate(sampled_params)}
+        raw_idx = {param: idx for idx, param in enumerate(self.desired_params)}
         
         for dataset in raw_datasets:
-            # If it's the analytical Fisher forecast object (GaussianND), draw mock samples
-            if hasattr(dataset, 'sample'):
-                samples = dataset.sample(100000) 
-            else:
-                # If it's a loaded MCMC chain (MCSamples), read the raw samples directly
-                samples = dataset.samples
+            samples = dataset.samples
                         
             # Perform the column transformation if bases differ
-            if list(sampled_params) != list(plot_params):
+            if list(self.desired_params) != list(plot_params):
                 projected_columns = []
                 for p in plot_params:
                     
                     if p.lower() == 'omega_m':
                         b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
                         c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
-                        projected_columns.append(samples[:, b_col] + samples[:, c_col])
+                        b_samples = samples[:, b_col] if b_col is not None else self.cosmology['Omega_b']
+                        c_samples = samples[:, c_col] if c_col is not None else self.cosmology['Omega_c']
+                        
+                        projected_columns.append(b_samples + c_samples)
                         
                     elif p.lower() == 'omega_lambda':
                         b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
@@ -2419,9 +2396,11 @@ class FisherForecaster:
                         k_col = raw_idx.get('omega_k') or raw_idx.get('Omega_k')
                         
                         # Fallback to 0 if omega_k isn't part of the sampled parameters
-                        k_samples = samples[:, k_col] if k_col is not None else 0.0
+                        b_samples = samples[:, b_col] if b_col is not None else self.cosmology['Omega_b']
+                        c_samples = samples[:, c_col] if c_col is not None else self.cosmology['Omega_c']
+                        k_samples = samples[:, k_col] if k_col is not None else self.cosmology['Omega_k']
                         
-                        projected_columns.append(1.0 - samples[:, b_col] - samples[:, c_col] - k_samples)
+                        projected_columns.append(1.0 - b_samples - c_samples - k_samples)
                     else:
                         projected_columns.append(samples[:, raw_idx[p]])
                         
@@ -2438,18 +2417,18 @@ class FisherForecaster:
             plot_datasets.append(mcsamples)
         
         # Rebuild markers dynamically to match your new plot basis columns
-        fiducial_vals = {}
-        for p in plot_params:
-            p_lower = p.lower()
-            if p_lower == 'omega_m':
-                fiducial_vals[p] = float(self.fiducial_dict['Omega_b']) + float(self.fiducial_dict['Omega_c'])
-            elif p_lower == 'omega_lambda':
-                b_val = float(self.fiducial_dict['Omega_b'])
-                c_val = float(self.fiducial_dict['Omega_c'])
-                k_val = float(self.fiducial_dict.get('Omega_k', 0.0))
-                fiducial_vals[p] = 1.0 - b_val - c_val - k_val
-            elif p in self.fiducial_dict:
-                fiducial_vals[p] = float(self.fiducial_dict[p])
+        #fiducial_vals = {}
+        #for p in plot_params:
+        #    p_lower = p.lower()
+        #    if p_lower == 'omega_m':
+        #        fiducial_vals[p] = float(self.fiducial_dict['Omega_b']) + float(self.fiducial_dict['Omega_c'])
+        #    elif p_lower == 'omega_lambda':
+        #        b_val = float(self.fiducial_dict['Omega_b'])
+        #        c_val = float(self.fiducial_dict['Omega_c'])
+        #        k_val = float(self.fiducial_dict.get('Omega_k', 0.0))
+        #        fiducial_vals[p] = 1.0 - b_val - c_val - k_val
+        #    elif p in self.fiducial_dict:
+        #        fiducial_vals[p] = float(self.fiducial_dict[p])
         
         g.triangle_plot(
             plot_datasets,
@@ -2509,7 +2488,7 @@ class FisherForecaster:
                 "| :--- | :--- | :---: | :---: |"
             ]
             
-            for param in param_names:
+            for param in plot_params:
                 display_label = latex_label_map.get(param, param)
                 param_idx = self.desired_params.index(param)
                 fiducial_val = float(self.fiducial_dict[param])
