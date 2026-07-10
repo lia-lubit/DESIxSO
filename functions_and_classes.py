@@ -56,56 +56,43 @@ print("LOADING FILE:", os.path.abspath(__file__))
 ### FUNCTIONS
 
 ## Plotting etc.    
-def _find_key_recursive(data, target_key):
+def find_key_recursive(data, target_key):
     """Recursively searches for a key in a nested dictionary/list structure."""
     if isinstance(data, dict):
         if target_key in data:
             return data[target_key]
         for key, value in data.items():
-            result = _find_key_recursive(value, target_key)
+            result = find_key_recursive(value, target_key)
             if result is not None:
                 return result
     elif isinstance(data, list):
         for item in data:
-            result = _find_key_recursive(item, target_key)
+            result = find_key_recursive(item, target_key)
             if result is not None:
                 return result
     return None
 
 # plot traces and contour plots from Cobaya, including reference points
 # mark if the run was incomplete, but assume it was complete unless otherwise stated
-def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4, burn_in_fraction=0.2, output_dir='plots', complete=True):
-    
-    # 1. Parse Fiducial Cosmology dynamically from the YAML structure
+def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, plot_params, num_chains=4, burn_in_fraction=0.2, output_dir='plots', complete=True, plot_triangle = True, plot_traces = True, print_summary = False, save_triangle = False, save_traces = False):
+
+    # fall back to plotting sampled parameteres
+    if plot_params is None:
+        plot_params = sampled_params
+        
     print(f"Reading fiducial values from: {yaml_path}")
     with open(yaml_path, 'r') as f:
         config = yaml.safe_load(f)
     
-    fiducial_block = _find_key_recursive(config, 'fiducial_cosmology_params')
+    fiducial_block = find_key_recursive(config, 'fiducial_cosmology_params')
     if fiducial_block is None:
         raise KeyError("Could not find 'fiducial_cosmology_params' anywhere inside the provided YAML file.")
 
     fiducial_vals = {}
-    for p in sampled_params:
-        if p in fiducial_block:
-            fiducial_vals[p] = float(fiducial_block[p])
-        elif p == 'Omega_m' and 'Omega_c' in fiducial_block and 'Omega_b' in fiducial_block:
-            fiducial_vals['Omega_m'] = float(fiducial_block['Omega_c']) + float(fiducial_block['Omega_b'])
-            print(f"Derived fiducial Omega_m = Omega_c + Omega_b = {fiducial_vals['Omega_m']:.4f}")
-        elif p == 'Omega_lambda':
-                # Dynamically fetch or derive Omega_m first
-                if 'Omega_m' in fiducial_block:
-                    om = float(fiducial_block['Omega_m'])
-                elif 'Omega_c' in fiducial_block and 'Omega_b' in fiducial_block:
-                    om = float(fiducial_block['Omega_c']) + float(fiducial_block['Omega_b'])
-                # Fetch Omega_k if it exists, otherwise default to flat universe (0.0)
-                ok = float(fiducial_block.get('Omega_k'))
-                fiducial_vals['Omega_lambda'] = 1.0 - om - ok
-        else:
-            print(f"Warning: Could not resolve fiducial value for '{p}'. Setting default to 0.0.")
-            fiducial_vals[p] = 0.0
-
-    # 2. Process Chains, Extract Initial Points, and Apply Burn-In
+    for p in fiducial_block:
+        fiducial_vals[p] = float(fiducial_block[p])
+        
+    # Process Chains, Extract Initial Points, and Apply Burn-In
     all_weights = []
     all_loglikes = []
     param_tracks = {p: [] for p in sampled_params}
@@ -113,6 +100,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
     raw_chain_data = []
 
     print(f"Processing {num_chains} chains from: {chain_dir}")
+    chain_lengths=[]
     for i in range(num_chains):
         chain_path = os.path.join(chain_dir, f'chain_task_{i}.txt')
         if os.path.exists(chain_path):
@@ -132,6 +120,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
             for idx, param in enumerate(sampled_params):
                 col_idx = idx + 2
                 param_tracks[param].append(data[burn:, col_idx])
+            chain_lengths.append(len(data[burn:]))
         else:
             print(f"Warning: {chain_path} not found. Skipping.")
 
@@ -140,8 +129,9 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
     latex_labels = {
         'Omega_m': r'\Omega_\mathrm{m}',
         'Omega_b': r'\Omega_\mathrm{b}',
-        'Omega_lambda': r'\Omega_\mathrm{lambda}',
+        'Omega_c': r'\Omega_\mathrm{c}',
         'Omega_k': r'\Omega_\mathrm{k}',
+        'Omega_lambda': r'\Omega_\mathrm{\Lambda}',
         'wa': r'w_a',
         'w0': r'w_0',
         'h': r'h',
@@ -151,27 +141,106 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         'm_nu': r'm_\mathrm{nu}',
         'T_CMB': r'T_\mathrm{CMB}'
     }
-    labels = [latex_labels.get(p, p) for p in sampled_params]
 
+    labels = [latex_labels.get(p, p) for p in plot_params]
+
+    # add extra parameters from plot_params to the chain dict, etc.
+    chain_columns = list(sampled_params)
+
+    if list(sampled_params) != list(plot_params):
+        chain_length = len(combined_samples)
+        indices = {p: i for p, i in zip(sampled_params, range(len(sampled_params)))}
+
+        h_data = combined_samples[:, indices['h']] if indices.get('h') is not None else np.full(chain_length, fiducial_vals.get('h'))
+        omega_b_data = combined_samples[:, indices['Omega_b']] if indices.get('Omega_b') is not None else np.full(chain_length, fiducial_vals.get('Omega_b'))
+        omega_c_data = combined_samples[:, indices['Omega_c']] if indices.get('Omega_c') is not None else np.full(chain_length, fiducial_vals.get('Omega_c'))
+        m_nu_data = combined_samples[:, indices['m_nu']] if indices.get('m_nu') is not None else np.full(chain_length, fiducial_vals.get('m_nu'))
+        omega_k_data = combined_samples[:, indices['Omega_k']] if indices.get('Omega_k') is not None else np.full(chain_length, fiducial_vals.get('Omega_k', 0.0))
+
+        # Compute derived arrays
+        omega_nu_data = m_nu_data / ((h_data ** 2) * 93.15)
+        omega_m_data = omega_b_data + omega_c_data + omega_nu_data
+        omega_lambda_data = 1.0 - omega_m_data - omega_k_data
+
+        # Stack columns and calculate companion dictionary entries and chains
+        for name, data_array in [('Omega_m', omega_m_data), ('Omega_lambda', omega_lambda_data)]:
+            if name in plot_params and name not in chain_columns:
+                combined_samples = np.column_stack([combined_samples, data_array])
+                chain_columns.append(name)
+                labels.append(latex_labels.get(name, name))
+                
+                # --- CASE 1: OMEGA_M ---
+                if name == 'Omega_m':
+                    # fiducial values dictionary
+                    h_f = float(fiducial_block.get('h'))
+                    m_nu_f = float(fiducial_block.get('m_nu'))
+                    fiducial_vals['Omega_m'] = float(fiducial_block.get('Omega_c')) + float(fiducial_block.get('Omega_b')) + (m_nu_f / ((h_f ** 2) * 93.15))
+                    
+                    # initial points dictionary
+                    for pt in initial_points:
+                        omega_c = pt.get('Omega_c', fiducial_vals.get('Omega_c'))
+                        omega_b = pt.get('Omega_b', fiducial_vals.get('Omega_b'))
+                        m_nu_pt = pt.get('m_nu', fiducial_vals.get('m_nu'))
+                        h_pt    = pt.get('h', fiducial_vals.get('h'))
+                        
+                        pt['Omega_m'] = omega_c + omega_b + (m_nu_pt / ((h_pt ** 2) * 93.15))
+
+                    #chains
+                    if name not in param_tracks:
+                        param_tracks[name] = []
+                    start_idx = 0
+                    for i in range(num_chains):
+                        end_idx = start_idx + chain_lengths[i]
+                        param_tracks[name].append(omega_m_data[start_idx:end_idx])
+                        start_idx = end_idx
+
+                # OMEGA_LAMBDA
+                elif name == 'Omega_lambda':
+                    # fiducial values dictionary
+                    h_f = float(fiducial_block.get('h'))
+                    m_nu_f = float(fiducial_block.get('m_nu'))
+                    om_f = float(fiducial_block.get('Omega_c')) + float(fiducial_block.get('Omega_b')) + (m_nu_f / ((h_f ** 2) * 93.15))
+                    ok_f = float(fiducial_block.get('Omega_k', 0.0))
+                    fiducial_vals['Omega_lambda'] = 1.0 - om_f - ok_f
+
+                    # initial points dictionary
+                    for pt in initial_points:
+                        omega_c = pt.get('Omega_c', fiducial_vals.get('Omega_c'))
+                        omega_b = pt.get('Omega_b', fiducial_vals.get('Omega_b'))
+                        m_nu_pt = pt.get('m_nu', fiducial_vals.get('m_nu'))
+                        h_pt    = pt.get('h', fiducial_vals.get('h'))
+                        ok_pt   = pt.get('Omega_k', fiducial_vals.get('Omega_k', 0.0))
+                        
+                        # Explicitly compute total matter for this point from scratch
+                        om_pt = omega_c + omega_b + (m_nu_pt / ((h_pt ** 2) * 93.15))
+                        pt['Omega_lambda'] = 1.0 - om_pt - ok_pt
+
+                    # chains
+                    if name not in param_tracks:
+                        param_tracks[name] = []
+                    start_idx = 0
+                    for i in range(num_chains):
+                        end_idx = start_idx + chain_lengths[i]
+                        param_tracks[name].append(omega_lambda_data[start_idx:end_idx])
+                        start_idx = end_idx
+                        
     samples = MCSamples(
         samples=combined_samples,
         weights=np.concatenate(all_weights),
         loglikes=np.concatenate(all_loglikes),
-        names=sampled_params,
+        names=chain_columns,
         labels=labels,
         settings={'ignore_rows': 0.0}
     )
 
     peaks = {}
-    for param in sampled_params:
+    for param in plot_params:
         density1D = samples.get1DDensity(param)
         peaks[param] = density1D.x[np.argmax(density1D.P)]
 
-    # --- NAME STRIPPING & COMPLETION MODIFICATIONS ---
+    # NAME STRIPPING & COMPLETION MODIFICATIONS
     os.makedirs(output_dir, exist_ok=True)
     raw_run_name = os.path.basename(os.path.normpath(chain_dir))
-    
-    # Clean the filename by stripping out '_likelihood' or 'likelihood'
     clean_run_name = raw_run_name.replace('_likelihood', '').replace('likelihood', '')
     display_title = clean_run_name.replace('_', ' ')
 
@@ -183,78 +252,165 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, num_chains=4,
         file_suffix = ""
         title_suffix = ""
 
-    # --- 3. TRIANGLE CONTOUR PLOT ---
-
-    for param_name, latex_string in latex_labels.items():
-        if samples.paramNames.hasParam(param_name):
-            samples.paramNames.parWithName(param_name).label = latex_string
-        
-    g1 = plots.get_subplot_plotter(width_inch=2.5 * len(sampled_params))
-    g1.triangle_plot(
-        [samples], 
-        params=sampled_params, 
-        filled=True, 
-        contour_colors=['darkblue'],
-        title_limit=1, # this allows the printing to proceed properly
-        markers=fiducial_vals
-    )
-
-    for row in range(len(sampled_params)):
-        for col in range(row + 1):
-            ax = g1.subplots[row, col]
-            if ax is None:
-                continue
-            p_row = sampled_params[row]
-            p_col = sampled_params[col]
-            if row == col:
-                ax.axvline(x=peaks[p_row], color='crimson', linestyle=':', alpha=0.8, label='MCMC Peak')
-                for idx, pt in enumerate(initial_points):
-                    lbl = 'Initial Points' if (row == 0 and idx == 0) else ""
-                    ax.axvline(x=pt[p_row], color='darkorange', linestyle='-', alpha=0.4, linewidth=1, label=lbl)
-                if row == 0:  
-                    ax.legend(loc='upper right', fontsize=8)
-            else:
-                for idx, pt in enumerate(initial_points):
-                    lbl = 'Initial Points' if (row == len(sampled_params)-1 and col == len(sampled_params)-2 and idx == 0) else ""
-                    ax.scatter(pt[p_col], pt[p_row], color='darkorange', marker='x', s=40, zorder=5, alpha=0.8, label=lbl)
-                if row == len(sampled_params)-1 and col == len(sampled_params)-2:
-                    ax.legend(loc='upper right', fontsize=8)
-
-    plt.suptitle(f"Marginalized Constraints: {display_title}{title_suffix}", y=1.02, fontsize=10)
-    triangle_save_path = os.path.join(output_dir, f"{clean_run_name}_triangle_plot{file_suffix}.pdf")
-    g1.export(triangle_save_path)
-    print(f"Saved triangle plot to: {triangle_save_path}")
-    plt.show()
-
-    # --- 4. TRACE PLOTS ---
-    fig, axes = plt.subplots(len(sampled_params), 1, figsize=(12, 3 * len(sampled_params)), sharex=True)
-    if len(sampled_params) == 1:
-        axes = [axes]
-
-    for idx, param in enumerate(sampled_params):
-        col_idx = idx + 2
-        ax = axes[idx]
-        
-        for i, chain_data in enumerate(raw_chain_data):
-            ax.plot(chain_data[:, col_idx], alpha=0.6, linewidth=0.8, label=f'Chain {i}' if idx == 0 else "")
-        
-        ax.axhline(y=peaks[param], color='crimson', linestyle=':', alpha=0.8, label=f'Peak: {peaks[param]:.4f}')
-        ax.axhline(y=fiducial_vals[param], color='black', linestyle='--', alpha=0.6, label=f'Fiducial: {fiducial_vals[param]:.4f}')
-        
-        param_label = latex_labels.get(param, param)
-        ax.set_ylabel(f"${param_label}$")
-        ax.legend(loc='upper right', fontsize=9)
-        ax.grid(True, alpha=0.3)
-        
-    axes[0].set_title(f"MCMC Trace Plots: {display_title}{title_suffix}", fontsize=12)
-    axes[-1].set_xlabel('Step Number (Including Burn-in)')
+    # TRIANGLE CONTOUR PLOT
+    if plot_triangle:
+        for param_name, latex_string in latex_labels.items():
+            if samples.paramNames.hasParam(param_name):
+                samples.paramNames.parWithName(param_name).label = latex_string
+            
+        g1 = plots.get_subplot_plotter(width_inch=2.5 * len(plot_params))
+        g1.triangle_plot(
+            [samples], 
+            params=plot_params, 
+            filled=True, 
+            contour_colors=['darkblue'],
+            title_limit=1,
+            markers=fiducial_vals
+        )
     
-    plt.tight_layout()
-    trace_save_path = os.path.join(output_dir, f"{clean_run_name}_traces{file_suffix}.png")
-    plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
-    print(f"Saved trace plot to: {trace_save_path}")
-    plt.show()
+        for row in range(len(plot_params)):
+            for col in range(row + 1):
+                ax = g1.subplots[row, col]
+                if ax is None:
+                    continue
+                p_row = plot_params[row]
+                p_col = plot_params[col]
+                if row == col:
+                    ax.axvline(x=peaks[p_row], color='crimson', linestyle=':', alpha=0.8, label='MCMC Peak')
+                    for idx, pt in enumerate(initial_points):
+                        lbl = 'Initial Points' if (row == 0 and idx == 0) else ""
+                        ax.axvline(x=pt[p_row], color='darkorange', linestyle='-', alpha=0.4, linewidth=1, label=lbl)
+                    if row == 0:  
+                        ax.legend(loc='upper right', fontsize=8)
+                else:
+                    for idx, pt in enumerate(initial_points):
+                        lbl = 'Initial Points' if (row == len(plot_params)-1 and col == len(plot_params)-2 and idx == 0) else ""
+                        ax.scatter(pt[p_col], pt[p_row], color='darkorange', marker='x', s=40, zorder=5, alpha=0.8, label=lbl)
+                    if row == len(plot_params)-1 and col == len(plot_params)-2:
+                        ax.legend(loc='upper right', fontsize=8)
+    
+        plt.suptitle(f"Marginalized Constraints: {display_title}{title_suffix}", y=1.02, fontsize=10)
+    
+        if save_triangle:
+            triangle_save_path = os.path.join(output_dir, f"{clean_run_name}_triangle_plot{file_suffix}.pdf")
+            g1.export(triangle_save_path)
+            print(f"Saved triangle plot to: {triangle_save_path}")
+        
+        plt.show()
+    
+    # TRACE PLOTS
+    if plot_traces:
+        fig, axes = plt.subplots(len(plot_params), 1, figsize=(12, 3 * len(plot_params)), sharex=True)
+        if len(plot_params) == 1:
+            axes = [axes]
 
+        for idx, param in enumerate(plot_params):
+            ax = axes[idx]
+            
+            # Use .get() to safely check if the parameter key exists in the dictionary
+            chains_list = param_tracks.get(param, None)
+            
+            if chains_list is not None:
+                # Loop through each individual chain array stored under this key
+                for i, chain_data in enumerate(chains_list):
+                    ax.plot(chain_data, alpha=0.5, linewidth=0.8, label=f'Chain {i+1}')
+            else:
+                print(f"Warning: No trace data found for {param} in param_tracks. Skipping line plot.")
+            
+            # Add Peak and Fiducial lines
+            if param in peaks:
+                ax.axhline(y=peaks[param], color='crimson', linestyle=':', alpha=0.8, label=f'Peak: {peaks[param]:.4f}')
+            
+            if param in fiducial_vals:
+                ax.axhline(y=fiducial_vals[param], color='black', linestyle='--', alpha=0.6, label=f'Fiducial: {fiducial_vals[param]:.4f}')
+                
+            param_label = latex_labels.get(param, param)
+            ax.set_ylabel(f"${param_label}$")
+            ax.legend(loc='upper right', fontsize=8, ncol=2) 
+            ax.grid(True, alpha=0.3)
+    
+        axes[0].set_title(f"MCMC Trace Plots: {display_title}{title_suffix}", fontsize=12)
+        axes[-1].set_xlabel('Step Number (After Burn-in)')
+        
+        plt.tight_layout()
+    
+        if save_traces:
+            trace_save_path = os.path.join(output_dir, f"{clean_run_name}_traces{file_suffix}.png")
+            plt.savefig(trace_save_path, dpi=300, bbox_inches='tight')
+            print(f"Saved trace plot to: {trace_save_path}")
+    
+        plt.show()
+        
+    # PRINT SUMMARY 
+    if print_summary:
+        # Initialize the single master table header
+        md_lines = [
+            "| Parameter | 1-Sigma (68%) | 2-Sigma (95%) |",
+            "| :--- | :---: | :---: |"
+        ]
+        
+        for param in plot_params:
+            display_label = latex_labels.get(param, param)
+            fiducial_val = float(fiducial_vals[param])
+            
+            # Track the first row for this parameter block to display its name
+            first_row_for_param = True
+    
+            # Helper function to dynamically convert any number into a clean LaTeX exponent string
+            def format_value(val, sig):
+                # Check if either the value or the error falls outside [0.001, 99]
+                if abs(val) > 99 or abs(sig) > 99 or (0 < abs(val) < 0.001) or (0 < abs(sig) < 0.001):
+                    # Convert to scientific notation (e.g., "2.10e-09" or "8.76e+09")
+                    val_str = f"{val:.2e}"
+                    sig_str = f"{sig:.2e}"
+                    
+                    # Split base and exponent: "2.10e-09" -> "2.10", "-09"
+                    v_base, v_exp = val_str.split('e')
+                    s_base, s_exp = sig_str.split('e')
+                    
+                    # Clean up sign/leading zeros in exponents (e.g., "-09" -> "-9", "+04" -> "4")
+                    v_exp = int(v_exp)
+                    s_exp = int(s_exp)
+                    
+                    # If they share the exact same exponent, group them cleanly like: (2.10 \pm 1.19) \cdot 10^{-9}
+                    if v_exp == s_exp:
+                        return f"({v_base} \\pm {s_base}) \\cdot 10^{{{v_exp}}}"
+                    else:
+                        # If exponents are different, print them individually
+                        return f"{v_base} \\cdot 10^{{{v_exp}}} \\pm {s_base} \\cdot 10^{{{s_exp}}}"
+                else:
+                    # Fall back to your standard readable decimal format
+                    dec = 4 if sig < 0.01 else 3 
+                    return f"{val:.{dec}f} \\pm {sig:.{dec}f}"
+    
+    
+            val_1sig = samples.getInlineLatex(param, limit=1)
+            val_2sig = samples.getInlineLatex(param, limit=2)
+            
+            # If GetDist included an '=', split it to throw away its broken label (e.g., 'Omegam')
+            if "=" in val_1sig:
+                val_1sig = val_1sig.split("=")[-1].strip()
+            if "=" in val_2sig:
+                val_2sig = val_2sig.split("=")[-1].strip()
+            
+            # Rebuild the string using your beautiful latex_label_map entry
+            str_1sig = f"${display_label} = {val_1sig}$"
+            str_2sig = f"${display_label} = {val_2sig}$"
+                
+            # FIX: Moved outside the except block so every model gets appended
+            param_col = f"**${display_label}$**" if first_row_for_param else ""
+            md_lines.append(f"| {param_col} | {str_1sig} | {str_2sig} |")
+            first_row_for_param = False
+                        
+            # Add a visual divider line between parameter blocks
+            md_lines.append("| --- | --- | --- |")
+    
+        # Render the unified master table cleanly in the notebook
+        display(Markdown("\n".join(md_lines)))
+    
+        print("")
+        print("")
+        
 # calcualte and (maybe) plot angular power spectra
 def calculate_and_plot_Cls(
     cosmology,        # ccl.Cosmology object
@@ -1600,7 +1756,7 @@ def instrument_Pk2D(pk2d_object):
 class SO_x_DESI_Likelihood(Likelihood):
 
     params = {
-        "Omega_m": None, # matter density
+        "Omega_c": None, # cold dark matter density
         "A_s": None,     # amplitude of primordial fluctuations
         "h": None,       # Hubble parameter
         "Omega_b": None, # baryon density
@@ -1608,8 +1764,8 @@ class SO_x_DESI_Likelihood(Likelihood):
         "w0": None,      # dark energy equation of state parameter
         "wa": None,      # dark energy equation of state parameter evolution
         "Omega_k": None, # curvature density (for curved LCDM) - will set to 0 for flat_LCDM
-        "Neff": None,     # effective number of massless neutrinos present -- defaults to 3.044
-        "m_nu": None,     # eass in eV of the massive neutrinos present
+        "Neff": None,    # effective number of massless neutrinos present -- defaults to 3.044
+        "m_nu": None,    # mass in eV of the massive neutrinos present
         "T_CMB": None    # contemporary tempature of the CMB
     }
 
@@ -1695,16 +1851,14 @@ class SO_x_DESI_Likelihood(Likelihood):
         else:
             self.cmb_noise_TE = None
 
-        # retrieve lens and source data arrays dynamically.
-        # these are expected to be available as global variables in the notebook
-        # and their names are passed via data_specs
+        # retrieve lens and source data arrays
         self.lens_data = np.load(self.data_specs['lens_data_path'])
         self.source_data = np.load(self.data_specs['source_data_path'])
 
         print(f"  Loaded lens data from {self.data_specs['lens_data_path']}")
         print(f"  Loaded source data from: {self.data_specs['source_data_path']}")
 
-        # New: Check for pre-computed data vector and covariance matrix paths
+        # check for pre-computed data vector and covariance matrix paths
         self.data_vector_path = self.data_specs.get('data_vector_path')
         self.covariance_path = self.data_specs.get('covariance_path')
 
@@ -1720,8 +1874,7 @@ class SO_x_DESI_Likelihood(Likelihood):
             num_lens_bins = self.lens_data.shape[1] - 1
             num_source_bins = self.source_data.shape[1] - 1
             desired_pairs = create_simplified_desired_pairs(num_lens_bins, num_source_bins, self.desired_spectra)
-            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins, l_min=self.l_min, n_ell=self.n_ell,
-                                     desired_pairs=desired_pairs, cmb_primaries = self.cmb_primaries)
+            self.f_map = ForecastMap(n_lens=num_lens_bins, n_src=num_source_bins, l_min=self.l_min, n_ell=self.n_ell, desired_pairs=desired_pairs, cmb_primaries = self.cmb_primaries)
 
             # Verify compatibility (optional but good practice)
             num_binned_ells = int(np.ceil(self.n_ell / self.binsize))
@@ -1809,7 +1962,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         #ccl_data = kwargs['CCL']
         #current_cosmology = ccl_data.get_cosmology()
 
-        Omega_m = kwargs.get('Omega_m', kwargs.get('omega_m'))
+        Omega_c = kwargs['Omega_c']
         Omega_b = kwargs['Omega_b']
         h = kwargs['h']
         A_s = kwargs['A_s']
@@ -1820,11 +1973,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         Neff = kwargs['Neff']
         m_nu = kwargs['m_nu']
         T_CMB = kwargs['T_CMB']
-        Omega_c = Omega_m - Omega_b
 
-        if Omega_m < 0.1 or Omega_m > 0.6:
-            print("omega_m outside of bounds")
-    
         current_cosmology = ccl.Cosmology(
             Omega_c=Omega_c,
             Omega_b=Omega_b,
@@ -1865,9 +2014,8 @@ class SO_x_DESI_Likelihood(Likelihood):
         return log_likelihood
     
     def profile_chi2(self, **kwargs):
-        Omega_m = kwargs.get('Omega_m')
+        Omega_c = kwargs.get('Omega_c')
         Omega_b = kwargs.get('Omega_b')
-        Omega_c = Omega_m - Omega_b
         h = kwargs.get('h')
         A_s = kwargs.get('A_s')
         n_s = kwargs.get('n_s')
@@ -2142,54 +2290,6 @@ class FisherForecaster:
         
         return self.F, self.cov
 
-    # compute partial derivative between paramaters for Jacobian
-    # derivative of param1 wrt param2
-    # NOT FULLY TESTED, NOT USED
-    def get_partial_derivative(self, parameter1, parameter2):
-
-        param1 = parameter1.lower()
-        param2 = parameter2.lower()
-        
-        if param1 == param2:
-            return 1
-
-        elif param2 == 'omega_m':
-            if param1 in ['omega_c', 'omega_b']:
-                return 1
-                
-        elif param2 == 'omega_lambda':
-            if param1 in ['omega_c', 'omega_b', 'omega_k']:
-                return -1
-                
-        else:
-            return 0
-            
-    # project matrix from one set of parameters to another
-    # e.g. omega_b omega_c omega_k to omega_b omega_m omega_k
-    # NOT FULLY TESTED, NOT USED
-    def project_fisher_matrix(self, F_raw, plot_params):
-
-        print("WARNING: Our get_partial_derivative function is only equipped to handle omega_m, omega_b, omega_c, omega_k, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
-        
-        # if the bases are identical, no projection is needed
-        if list(self.desired_params) == list(plot_params):
-            return F_raw
-
-        # build Jacobian matrix 
-        n_sampled = len(self.desired_params)
-        n_plotted = len(plot_params)
-        J = np.zeros((n_sampled, n_plotted))
-        
-        for i in range(n_sampled):
-            for j in range(n_plotted):
-                # each entry is the partial derivative of the old parameter wrt the new parameter
-                J[i][j] = self.get_partial_derivative(self.desired_params[i], plot_params[j])
-                
-        # Transform: F_new = J^T @ F_raw @ J
-        F_projected = J.T @ F_raw @ J
-    
-        return F_projected
-
     def sample_fisher_with_uniform_priors(self, uniform_priors=None, num_samples=200000):
         
         if self.cov is None:
@@ -2363,7 +2463,6 @@ class FisherForecaster:
         fiducial_vals = {p: float(self.fiducial_dict[p]) for p in plot_params if p in self.fiducial_dict}
 
         # Loop through each dataset and update the parameter labels manually
-        ##### FIX THIS
         for dataset in raw_datasets:
             for param_name, latex_string in latex_labels.items():
                 # Get the list of names and check using 'in'
