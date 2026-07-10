@@ -2144,6 +2144,7 @@ class FisherForecaster:
 
     # compute partial derivative between paramaters for Jacobian
     # derivative of param1 wrt param2
+    # NOT FULLY TESTED, NOT USED
     def get_partial_derivative(self, parameter1, parameter2):
 
         param1 = parameter1.lower()
@@ -2165,6 +2166,7 @@ class FisherForecaster:
             
     # project matrix from one set of parameters to another
     # e.g. omega_b omega_c omega_k to omega_b omega_m omega_k
+    # NOT FULLY TESTED, NOT USED
     def project_fisher_matrix(self, F_raw, plot_params):
 
         print("WARNING: Our get_partial_derivative function is only equipped to handle omega_m, omega_b, omega_c, omega_k, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
@@ -2316,7 +2318,7 @@ class FisherForecaster:
                 samples=combined_samples,
                 weights=np.concatenate(all_weights),
                 loglikes=np.concatenate(all_loglikes),
-                names=plot_params,
+                names=self.desired_params,
                 labels=cobaya_labels,
                 settings={'ignore_rows': 0.0}
             )
@@ -2330,7 +2332,7 @@ class FisherForecaster:
             
             # Generate uniform random samples covering the full prior range
             prior_samples_dict = {}
-            for p in plot_params:
+            for p in self.desired_params:
                 if p in uniform_priors:
                     p_min, p_max = uniform_priors[p]
                     prior_samples_dict[p] = np.random.uniform(p_min, p_max, size=num_samples)
@@ -2343,7 +2345,7 @@ class FisherForecaster:
             
             prior_dataset = MCSamples(
                 samples=prior_df.values, 
-                names=plot_params, 
+                names=self.desired_params, 
                 labels=labels, 
                 name_tag="Uniform Priors"
             )
@@ -2368,8 +2370,6 @@ class FisherForecaster:
                 if param_name in [p.name for p in dataset.paramNames.names]:
                     dataset.paramNames.parWithName(param_name).label = latex_string
 
-        #### NEW -- CHECK
-        #### IS THIS REALLY SLOW?
         # loop through datasets and convert from self.desired_params to plot_params
         plot_datasets = []
         raw_idx = {param: idx for idx, param in enumerate(self.desired_params)}
@@ -2417,28 +2417,14 @@ class FisherForecaster:
                 samples = np.column_stack(projected_columns)
 
             # Package up into GetDist format
-            #### HOW DO I ADD A SUITABLE NAME TAG
-            ### ARE THE LABELS ETC STILL CORRECT? -- PROBABLY NOT, RIGHT?
             mcsamples = MCSamples(
                 samples=samples, 
                 names=plot_params, 
+                labels=labels,
+                name_tag=dataset.name_tag
             )
         
             plot_datasets.append(mcsamples)
-        
-        # Rebuild markers dynamically to match your new plot basis columns
-        #fiducial_vals = {}
-        #for p in plot_params:
-        #    p_lower = p.lower()
-        #    if p_lower == 'omega_m':
-        #        fiducial_vals[p] = float(self.fiducial_dict['Omega_b']) + float(self.fiducial_dict['Omega_c'])
-        #    elif p_lower == 'omega_lambda':
-        #        b_val = float(self.fiducial_dict['Omega_b'])
-        #        c_val = float(self.fiducial_dict['Omega_c'])
-        #        k_val = float(self.fiducial_dict.get('Omega_k', 0.0))
-        #        fiducial_vals[p] = 1.0 - b_val - c_val - k_val
-        #    elif p in self.fiducial_dict:
-        #        fiducial_vals[p] = float(self.fiducial_dict[p])
         
         g.triangle_plot(
             plot_datasets,
@@ -2500,7 +2486,6 @@ class FisherForecaster:
             
             for param in plot_params:
                 display_label = latex_label_map.get(param, param)
-                param_idx = self.desired_params.index(param)
                 fiducial_val = float(self.fiducial_dict[param])
                 
                 # Track the first row for this parameter block to display its name
@@ -2533,35 +2518,21 @@ class FisherForecaster:
                         dec = 4 if sig < 0.01 else 3 
                         return f"{val:.{dec}f} \\pm {sig:.{dec}f}"
 
-                for dataset, label in zip(raw_datasets, legend_labels):
+                for dataset, label in zip(plot_datasets, legend_labels):
                     
-                    # --- CASE 1: Analytical Covariance Matrix for the Prior-less Forecast ---
-                    if label == "Fisher Forecast (No Priors)":
-                        sigma_1 = np.sqrt(self.cov[param_idx, param_idx])
-                                
-                        # Generate strings using our universal formatting rules
-                        val_sig_1 = format_value(fiducial_val, sigma_1)
-                        val_sig_2 = format_value(fiducial_val, 2.0 * sigma_1)
-                        
-                        # Build the final strings making sure the math label is ALWAYS attached
-                        str_1sig = f"${display_label} = {val_sig_1}$"
-                        str_2sig = f"${display_label} = {val_sig_2}$"
+                    val_1sig = dataset.getInlineLatex(param, limit=1)
+                    val_2sig = dataset.getInlineLatex(param, limit=2)
                     
-                    # --- CASE 2: GetDist Objects (Fisher With Priors & Cobaya MCMC Chains) ---
-                    else:
-                        val_1sig = dataset.getInlineLatex(param, limit=1)
-                        val_2sig = dataset.getInlineLatex(param, limit=2)
+                    # If GetDist included an '=', split it to throw away its broken label (e.g., 'Omegam')
+                    if "=" in val_1sig:
+                        val_1sig = val_1sig.split("=")[-1].strip()
+                    if "=" in val_2sig:
+                        val_2sig = val_2sig.split("=")[-1].strip()
+                    
+                    # Rebuild the string using your beautiful latex_label_map entry
+                    str_1sig = f"${display_label} = {val_1sig}$"
+                    str_2sig = f"${display_label} = {val_2sig}$"
                         
-                        # If GetDist included an '=', split it to throw away its broken label (e.g., 'Omegam')
-                        if "=" in val_1sig:
-                            val_1sig = val_1sig.split("=")[-1].strip()
-                        if "=" in val_2sig:
-                            val_2sig = val_2sig.split("=")[-1].strip()
-                        
-                        # Rebuild the string using your beautiful latex_label_map entry
-                        str_1sig = f"${display_label} = {val_1sig}$"
-                        str_2sig = f"${display_label} = {val_2sig}$"
-                            
                     # FIX: Moved outside the except block so every model gets appended
                     param_col = f"**${display_label}$**" if first_row_for_param else ""
                     md_lines.append(f"| {param_col} | {label} | {str_1sig} | {str_2sig} |")
