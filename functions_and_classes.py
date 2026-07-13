@@ -517,10 +517,11 @@ def calculate_and_plot_Cls(
         T_CMB = cosmology['T_CMB']
         l_max = n_ell + l_min
 
-        # fix the error wherein it thinks m_nu etc is a list
-        m_nu = float(m_nu[0]) if isinstance(m_nu, (list, np.ndarray)) else float(m_nu)
-        Neff = float(Neff[0]) if isinstance(Neff, (list, np.ndarray)) else float(Neff)
-        T_CMB = float(T_CMB[0]) if isinstance(T_CMB, (list, np.ndarray)) else float(T_CMB)
+        # fix the error wherein it thinks m_nu is a list
+        if hasattr(m_nu, '__len__') or isinstance(m_nu, (list, np.ndarray)):
+                m_nu = np.sum(m_nu)        
+        #Neff = float(Neff[0]) if isinstance(Neff, (list, np.ndarray)) else float(Neff)
+        #T_CMB = float(T_CMB[0]) if isinstance(T_CMB, (list, np.ndarray)) else float(T_CMB)
 
         pars = camb.CAMBparams()
         pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, omk=Omega_k, mnu=m_nu, nnu=Neff, TCMB=T_CMB)
@@ -1043,11 +1044,11 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         l_max = np.max(ells)
 
         # fix the error wherein it thinks m_nu etc is a list
-        m_nu = float(m_nu[0]) if isinstance(m_nu, (list, np.ndarray)) else float(m_nu)
-        Neff = float(Neff[0]) if isinstance(Neff, (list, np.ndarray)) else float(Neff)
-        T_CMB = float(T_CMB[0]) if isinstance(T_CMB, (list, np.ndarray)) else float(T_CMB)
+        if hasattr(m_nu, '__len__') or isinstance(m_nu, (list, np.ndarray)):
+            m_nu = np.sum(m_nu)
+        #Neff = float(Neff[0]) if isinstance(Neff, (list, np.ndarray)) else float(Neff)
+        #T_CMB = float(T_CMB[0]) if isinstance(T_CMB, (list, np.ndarray)) else float(T_CMB)
 
-        ##### CHECK
         pars = camb.CAMBparams()
         pars.set_cosmology(H0=h*100, ombh2=ombh2, omch2=omch2, omk=Omega_k, mnu=m_nu, nnu=Neff, TCMB=T_CMB)
         pars.InitPower.set_params(As=A_s, ns=n_s)
@@ -1075,7 +1076,9 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         lens_bins = [k for k in tracer_dict.keys() if k.startswith('g')]
         source_bins = [k for k in tracer_dict.keys() if k.startswith('kappa_g')]
 
-        # E-modes do not cross-correlate with late-time structures (scalar perturbations)
+        #### CHECK
+        # E-mode cross-correlations cannot be simply calculated with PyCCL or CAMB
+        # for the moment they are set to zero
         if 'kappa_c' in tracer_dict:
             spectra_dict[('E', 'kappa_c')] = np.zeros_like(ells) 
         
@@ -2081,9 +2084,9 @@ class FisherForecaster:
         
         # step sizes for numerical derivatives
         self.step_dict = step_dict if step_dict is not None else {
-            'Omega_m': 1e-2, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 
-            'Omega_c': 1e-4, 'Omega_k': 1e-3, 'Neff': 1e-3, 'm_nu': 1e-3, 'T_CMB': 1e-3, 'Omega_lambda': 1e-3 
-            ### consider changing the last four, I put these as temp values
+            'Omega_m': 1e-4, 'A_s': 2e-11, 'h': 1e-3, 'w0': 1e-2, 'wa': 1e-2, 'n_s': 1e-3, 'Omega_b': 1e-4, 
+            'Omega_c': 1e-4, 'Omega_k': 1e-3, 'Neff': 1e-2, 'm_nu': 1e-4, 'T_CMB': 1e-2, 'Omega_lambda': 1e-3 
+            # generally have the step about 1% of the value
         }
         
         # extract and freeze our baseline fiducial truths
@@ -2125,7 +2128,11 @@ class FisherForecaster:
         Neff = cosmology['Neff']
         m_nu = cosmology['m_nu']
         T_CMB = cosmology['T_CMB']
-        
+
+        # If pyccl returns m_nu as an array/list, sum it up to get the scalar total mass
+        if hasattr(m_nu, '__len__') or isinstance(m_nu, (list, np.ndarray)):
+            m_nu = np.sum(m_nu)
+            
         return {
             'Omega_m': Omega_m,
             'Omega_b': Omega_b,
