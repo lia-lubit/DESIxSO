@@ -2581,7 +2581,6 @@ class FisherForecaster:
             'T_CMB': r'T_\mathrm{CMB}'
         }
 
-        ##### MODIFY TO PRINT PLOTTED PARAMS
         # Quantitative Parameter Comparison (Table Output)
         if print_summary:
             # Initialize the single master table header
