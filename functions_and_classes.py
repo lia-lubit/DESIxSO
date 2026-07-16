@@ -56,6 +56,59 @@ print("LOADING FILE:", os.path.abspath(__file__))
 ### FUNCTIONS
 
 ## Plotting etc.    
+def get_partial_derivative(self, parameter1, parameter2):
+    
+    if param1 == param2:
+        return 1
+
+    elif param2 == 'Omega_m':
+        if param1 in ['Omega_c', 'Omega_b']:
+            return 1
+            
+    elif param2 == 'Omega_lambda':
+        if param1 in ['Omega_c', 'Omega_b', 'Omega_k']:
+            return -1
+            
+    elif param2 == 'Omega_c':
+        if param1 == 'omega_c':
+            
+    elif param2 == 'Omega_b':
+        if param1 == 'omega_b':
+
+    elif param2 == 'h':
+        if param1 == 'omega_c':
+        if param1 == 'omega_b':
+        if param1 == 'H':
+                    
+    else:
+        return 0
+        
+# project matrix from one set of parameters to another
+# e.g. omega_b omega_c omega_k to omega_b omega_m omega_k
+#### CHECK
+def project_fisher_matrix(self, F_raw, plot_params):
+
+    print("WARNING: Our get_partial_derivative function is only equipped to handle omega_m, omega_b, omega_c, omega_k, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
+    
+    # if the bases are identical, no projection is needed
+    if list(self.desired_params) == list(plot_params):
+        return F_raw
+
+    # build Jacobian matrix 
+    n_sampled = len(self.desired_params)
+    n_plotted = len(plot_params)
+    J = np.zeros((n_sampled, n_plotted))
+    
+    for i in range(n_sampled):
+        for j in range(n_plotted):
+            # each entry is the partial derivative of the old parameter wrt the new parameter
+            J[i][j] = self.get_partial_derivative(self.desired_params[i], plot_params[j])
+            
+    # Transform: F_new = J^T @ F_raw @ J
+    F_projected = J.T @ F_raw @ J
+
+    return F_projected
+
 def find_key_recursive(data, target_key):
     """Recursively searches for a key in a nested dictionary/list structure."""
     if isinstance(data, dict):
@@ -1587,7 +1640,6 @@ class CovarianceMatrix:
         # build covariance
         self._build_master_covariance()
 
-    # get the relevant C_l spectra
     def _compute_block(self, pair_A, pair_B):
         # ells from 2 to N_ell_unbinned + 1, so the indices i directly correspond to ell_values[i-2]
         ells_unbinned = np.arange(self.l_min, self.N_ell_unbinned + self.l_min)
@@ -1648,7 +1700,7 @@ class CovarianceMatrix:
             cov_terms_unbinned_diag = (current_Cl_ac * current_Cl_bd + current_Cl_ad * current_Cl_bc) / denom_factors
 
             # average covariance values in the bin
-            binned_block[i_bin, i_bin] = np.mean(cov_terms_unbinned_diag)
+            binned_block[i_bin, i_bin] = np.sum(cov_terms_unbinned_diag) / (self.binsize ** 2)
 
         return binned_block
 
@@ -2064,7 +2116,8 @@ class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, l_min = 2, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, cmb_noise_TE=None, magnification_bias_lenses=None, desired_spectra=None, 
-                 linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024):
+                 linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024, 
+                 additional_Fisher_matrix=None, additional_Fisher_params=None):
 
         self.cosmology = cosmology
         self.lens_data = lens_data
@@ -2072,7 +2125,10 @@ class FisherForecaster:
         self.cmb_primaries = cmb_primaries
         self.z_max = z_max
         self.n_chi = n_chi
-    
+        self.binsize = binsize
+        self.additional_Fisher_matrix=additional_Fisher_matrix
+        self.additional_Fisher_params=additional_Fisher_params
+        
         self.survey_params = {
             'f_sky': f_sky, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
@@ -2190,8 +2246,7 @@ class FisherForecaster:
         p = self.survey_params
         
         for param in desired_params:
-            # get step size, default to 1e-3
-            step = self.step_dict.get(param, 1e-3)
+            step = self.step_dict.get(param)
             
             params_up = self.fiducial_dict.copy()
             params_down = self.fiducial_dict.copy()
@@ -2254,7 +2309,9 @@ class FisherForecaster:
         
         self.desired_params = desired_params
         p = self.survey_params
-
+        if self.desired_params != self.additional_Fisher_params:
+            print("WARNING: the built Fisher matrix and the additional Fisher matrix DO NOT HAVE THE SAME PARAMETERS.")
+            
         # build fiducial covariance and theory vector if they are missing
         if C is None:
             cov_obj, _, _ = build_covariance_from_data(self.cosmology, self.lens_data, self.source_data, **p)
@@ -2281,11 +2338,16 @@ class FisherForecaster:
                 matrix1 = inv_C @ dC_di @ inv_C @ dC_dj
                 matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
                 F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
+
+        # add additional Fisher matrix, if provided
+        if self.additional_Fisher_matrix is not None:
+            self.F = F + self.additional_Fisher_matrix
+        else:
+            self.F = F
+
+        # calculate covariance matrix
+        self.cov = np.linalg.inv(self.F)   
         
-        self.F = F
-        self.cov = np.linalg.inv(F)   
-        
-        # print results in a highly readable format
         if print_summary:
             print("")
             print("Fisher Forecast Results Without Priors")
