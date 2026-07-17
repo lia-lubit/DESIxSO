@@ -56,53 +56,51 @@ print("LOADING FILE:", os.path.abspath(__file__))
 ### FUNCTIONS
 
 ## Plotting etc.    
-def get_partial_derivative(self, parameter1, parameter2):
+# get derivatives for select parameters 
+def get_partial_derivative(fiducial_values, param1, param2):
     
     if param1 == param2:
         return 1
-
-    elif param2 == 'Omega_m':
-        if param1 in ['Omega_c', 'Omega_b']:
-            return 1
+    
+    elif param1 == 'omega_c':
+        if param2 == 'Omega_c':
+            return (fiducial_values['h'] ** 2)
+        elif param2 == 'h':
+            return (2 * fiducial_values['h'] * fiducial_values['Omega_c'])
             
-    elif param2 == 'Omega_lambda':
-        if param1 in ['Omega_c', 'Omega_b', 'Omega_k']:
-            return -1
-            
-    elif param2 == 'Omega_c':
-        if param1 == 'omega_c':
-            
-    elif param2 == 'Omega_b':
-        if param1 == 'omega_b':
-
-    elif param2 == 'h':
-        if param1 == 'omega_c':
-        if param1 == 'omega_b':
-        if param1 == 'H':
+    elif param1 == 'omega_b':
+        if param2 == 'Omega_b':
+            return (fiducial_values['h'] ** 2)
+        elif param2 == 'h':
+            return (2 * fiducial_values['h'] * fiducial_values['Omega_b'])
+                    
+    elif param1 == 'H':
+        if param2 == 'h':
+            return 100
                     
     else:
         return 0
         
 # project matrix from one set of parameters to another
-# e.g. omega_b omega_c omega_k to omega_b omega_m omega_k
+# e.g. omega_b H to Omega_b h
 #### CHECK
-def project_fisher_matrix(self, F_raw, plot_params):
+def project_fisher_matrix(F_raw, fiducial_values, sampled_params, new_params):
 
-    print("WARNING: Our get_partial_derivative function is only equipped to handle omega_m, omega_b, omega_c, omega_k, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
+    print("WARNING: Our get_partial_derivative function is only equipped to handle Omega_m, Omega_b, omega_b, Omega_c, omega_c, Omega_k, H, h, A_s, n_s, Neff, m_nu, and T_CMB. If you have passed over parameters to it DO NOT TRUST THE RESULTS.")
     
     # if the bases are identical, no projection is needed
-    if list(self.desired_params) == list(plot_params):
+    if list(sampled_params) == list(plot_params):
         return F_raw
 
     # build Jacobian matrix 
-    n_sampled = len(self.desired_params)
-    n_plotted = len(plot_params)
+    n_sampled = len(sampled_params)
+    n_plotted = len(new_params)
     J = np.zeros((n_sampled, n_plotted))
     
     for i in range(n_sampled):
         for j in range(n_plotted):
             # each entry is the partial derivative of the old parameter wrt the new parameter
-            J[i][j] = self.get_partial_derivative(self.desired_params[i], plot_params[j])
+            J[i][j] = self.get_partial_derivative(fiducial_values, sampled_params[i], new_params[j])
             
     # Transform: F_new = J^T @ F_raw @ J
     F_projected = J.T @ F_raw @ J
@@ -2309,7 +2307,7 @@ class FisherForecaster:
         
         self.desired_params = desired_params
         p = self.survey_params
-        if self.desired_params != self.additional_Fisher_params:
+        if self.additional_Fisher_params is not None and self.desired_params != self.additional_Fisher_params:
             print("WARNING: the built Fisher matrix and the additional Fisher matrix DO NOT HAVE THE SAME PARAMETERS.")
             
         # build fiducial covariance and theory vector if they are missing
@@ -2544,15 +2542,14 @@ class FisherForecaster:
         
         for dataset in raw_datasets:
             samples = dataset.samples
-                        
             # Perform the column transformation if bases differ
             if list(self.desired_params) != list(plot_params):
                 projected_columns = []
                 for p in plot_params:
                     chain_length = samples.shape[0]                    
-                    if p.lower() == 'omega_m':
-                        b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
-                        c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
+                    if p == 'Omega_m':
+                        b_col = raw_idx.get('Omega_b')
+                        c_col = raw_idx.get('Omega_c')
                         m_nu_col = raw_idx.get('m_nu')
                         h_col = raw_idx.get('h')
 
@@ -2564,10 +2561,10 @@ class FisherForecaster:
 
                         projected_columns.append(b_samples + c_samples + Omega_nu_samples)
                         
-                    elif p.lower() == 'omega_lambda':
-                        b_col = raw_idx.get('omega_b') or raw_idx.get('Omega_b')
-                        c_col = raw_idx.get('omega_c') or raw_idx.get('omega_cdm') or raw_idx.get('Omega_c')
-                        k_col = raw_idx.get('omega_k') or raw_idx.get('Omega_k')
+                    elif p == 'Omega_lambda':
+                        b_col = raw_idx.get('Omega_b')
+                        c_col = raw_idx.get('Omega_c')
+                        k_col = raw_idx.get('Omega_k')
                         m_nu_col = raw_idx.get('m_nu')
                         h_col = raw_idx.get('h')
                         
