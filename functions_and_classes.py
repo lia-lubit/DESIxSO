@@ -1003,7 +1003,7 @@ def build_tracer_dict(lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, 
 # build noise dictionary
 # shot noise needs to have as many entries as lens bins
 # shape noise needs to have as many entries as source bins
-def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, cmb_noise_EE=None, cmb_noise_TE=None):
+def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, cmb_noise_EE=None):
     
     noise_dict = {}
 
@@ -1028,9 +1028,6 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
 
     if cmb_noise_EE is not None:
         noise_dict[('E','E')] = cmb_noise_EE
-
-    if cmb_noise_TE is not None:
-        noise_dict[('T','E')] = cmb_noise_TE
 
     return noise_dict
 
@@ -1145,9 +1142,6 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
             # generally only add noise to auto-spectra.
             if key_noise[0] == key_noise[1]:
                 spectra_dict[key_noise] += noise_val
-            # also add TE noise (checking both orderings)
-            elif (key_noise == ('E', 'T')) or (key_noise == ('T', 'E')):
-                spectra_dict[('E', 'T')] += noise_val 
     
     return spectra_dict
     
@@ -1237,7 +1231,6 @@ def build_covariance_from_data(
     cmb_noise_kk=None,
     cmb_noise_TT=None,
     cmb_noise_EE=None,
-    cmb_noise_TE=None,
     magnification_bias_lenses=None, 
     desired_spectra=None,
     linear_emulator=None,
@@ -1257,7 +1250,7 @@ def build_covariance_from_data(
     # build spectra
     lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses, z_max = z_max, n_chi = n_chi)
     tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kk, cmb_noise_TT = cmb_noise_TT, cmb_noise_EE = cmb_noise_EE, cmb_noise_TE = cmb_noise_TE)
+    noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kk, cmb_noise_TT = cmb_noise_TT, cmb_noise_EE = cmb_noise_EE)
     full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator, cmb_primaries = cmb_primaries)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
@@ -1897,13 +1890,6 @@ class SO_x_DESI_Likelihood(Likelihood):
         else:
             self.cmb_noise_EE = None
             
-        cmb_noise_TE_path = self.data_specs.get('cmb_noise_TE_path')
-        if cmb_noise_TE_path:
-            print(f"  Loading CMB noise from: {cmb_noise_TE_path}")
-            self.cmb_noise_TE = np.load(cmb_noise_TE_path)
-        else:
-            self.cmb_noise_TE = None
-
         # retrieve lens and source data arrays
         self.lens_data = np.load(self.data_specs['lens_data_path'])
         self.source_data = np.load(self.data_specs['source_data_path'])
@@ -1988,7 +1974,6 @@ class SO_x_DESI_Likelihood(Likelihood):
                     cmb_noise_kk=self.cmb_noise_kk,
                     cmb_noise_TT=self.cmb_noise_TT,
                     cmb_noise_EE=self.cmb_noise_EE,
-                    cmb_noise_TE=self.cmb_noise_TE,
                     magnification_bias_lenses=self.magnification_bias_lenses,
                     desired_spectra=self.desired_spectra,
                     linear_emulator=self.linear_emulator,
@@ -2050,7 +2035,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE, cmb_noise_TE = self.cmb_noise_TE)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator, cmb_primaries = self.cmb_primaries)
 
         # flatten the current Cls into a model data vector 'M'
@@ -2093,7 +2078,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE, cmb_noise_TE = self.cmb_noise_TE)
+        noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator, cmb_primaries = self.cmb_primaries)
 
         # flatten the current Cls into a model data vector 'M'
@@ -2113,7 +2098,7 @@ class SO_x_DESI_Likelihood(Likelihood):
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, l_min = 2, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
-                 cmb_noise_EE=None, cmb_noise_TE=None, magnification_bias_lenses=None, desired_spectra=None, 
+                 cmb_noise_EE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024, 
                  additional_Fisher_matrix=None, additional_Fisher_params=None):
 
@@ -2130,7 +2115,7 @@ class FisherForecaster:
         self.survey_params = {
             'f_sky': f_sky, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
-            'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE, 'cmb_noise_TE': cmb_noise_TE,
+            'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
             'linear_emulator': linear_emulator, 'boost_emulator': boost_emulator, 'cmb_primaries': cmb_primaries, 
             'z_max': z_max, 'n_chi': n_chi
@@ -2215,7 +2200,7 @@ class FisherForecaster:
         lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
             cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses'], z_max = p['z_max'], n_chi=p['n_chi'])
         tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], cmb_noise_kk = p['cmb_noise_kk'], cmb_noise_TT = p['cmb_noise_TT'], cmb_noise_EE = p['cmb_noise_EE'], cmb_noise_TE = p['cmb_noise_TE'])
+        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], cmb_noise_kk = p['cmb_noise_kk'], cmb_noise_TT = p['cmb_noise_TT'], cmb_noise_EE = p['cmb_noise_EE'])
         full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'], cmb_primaries=self.cmb_primaries)
         
         if self.sliced_pairs is not None: 
@@ -2224,7 +2209,7 @@ class FisherForecaster:
             final_spectra_dict = full_spectra_dict
 
         self.spectra_dict = final_spectra_dict
-        
+
         model_data_vector = []
         for pair in self.final_f_map.pairs:
             unbinned_cls = final_spectra_dict[pair]
@@ -2298,6 +2283,73 @@ class FisherForecaster:
             
         return C_derivatives, mu_derivatives
 
+    # plot derivatives of spectra wrt different parameters
+    def plot_derivatives(self, desired_params=None, normalized=False):
+        
+        if not hasattr(self, 'mu_derivatives') or self.mu_derivatives is None:
+            raise AttributeError(
+                "mu_derivatives not found. Please run self.make_fisher_matrix() first."
+            )
+            
+        # Survey parameters and points per pair
+        p = self.survey_params
+        n_points_per_pair = self.num_binned_ells
+        
+        # x-axis values (bin centers)
+        x_data = np.array([
+            np.mean(self.ells[i : i + p['binsize']]) 
+            for i in range(0, p['n_ell'], p['binsize'])
+        ])
+
+        # Extract ordered spectrum pairs
+        ordered_pairs = self.final_f_map.pairs 
+
+        # Retrieve the spectra dictionary
+        spectra_dict = getattr(self, 'final_spectra_dict', getattr(self, 'spectra_dict', None))
+        if normalized and spectra_dict is None:
+            raise AttributeError("Could not find 'final_spectra_dict' or 'spectra_dict' to normalize by C_l.")
+
+        for idx, pair in enumerate(ordered_pairs):
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            start_idx = idx * n_points_per_pair
+            end_idx = start_idx + n_points_per_pair
+            
+            # Compute binned C_ell for this specific pair (length 50)
+            if normalized:
+                unbinned_cl = np.array(spectra_dict[pair])
+                c_ell_segment = np.array([
+                    np.mean(unbinned_cl[i : i + p['binsize']]) 
+                    for i in range(0, p['n_ell'], p['binsize'])
+                ])
+
+            for param in desired_params:
+                if param not in self.mu_derivatives:
+                    continue
+                
+                param_deriv_segment = self.mu_derivatives[param][start_idx:end_idx]
+
+                if normalized:
+                    # Both arrays are length 50 now
+                    y_data = np.where(c_ell_segment != 0, param_deriv_segment / c_ell_segment, 0.0)
+                    y_label = rf"$\frac{{1}}{{C_\ell^{{\text{{{pair}}}}}}} \frac{{\partial C_\ell^{{\text{{{pair}}}}}}}{{\partial {param}}}$"
+                else:
+                    y_data = param_deriv_segment
+                    y_label = rf"$\frac{{\partial C_\ell^{{\text{{{pair}}}}}}}{{\partial {param}}}$"
+
+                ax.plot(x_data, y_data, label=y_label, lw=2)
+
+            ax.set_xlabel(r"Multipole $\ell$", fontsize=12)
+            ax.set_ylabel(
+                rf"$\frac{{1}}{{C_\ell}} \frac{{\partial \mu}}{{\partial \theta}}$" if normalized else rf"$\frac{{\partial \mu}}{{\partial \theta}}$", 
+                fontsize=12
+            )
+            ax.set_title(f"Derivatives for Spectrum Pair: {pair}", fontsize=14)
+            ax.grid(True, linestyle="--", alpha=0.5)
+            ax.legend(loc="best", frameon=True)
+            plt.tight_layout()
+            plt.show()
+            
     # build and invert Fisher matrix without considering priors, since they are uniform, not Gaussian
     def make_fisher_matrix(self, desired_params=None, C=None, mu=None, C_derivatives=None, mu_derivatives=None, print_summary = False):
         
@@ -2320,6 +2372,9 @@ class FisherForecaster:
         if C_derivatives is None or mu_derivatives is None:
             C_derivatives, mu_derivatives = self.get_derivatives(desired_params)
 
+        self.C_derivatives = C_derivatives
+        self.mu_derivatives = mu_derivatives
+        
         n_params = len(desired_params)
         F = np.zeros((n_params, n_params))
         inv_C = np.linalg.inv(C)
