@@ -54,7 +54,276 @@ print("LOADING FILE:", os.path.abspath(__file__))
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ### FUNCTIONS
+def sample_fisher_with_uniform_priors(
+    fiducial_cosmology,
+    sampled_params,
+    covariance,
+    name_tag="Fisher",
+    uniform_priors=None,
+    num_samples=200000,
+):
+    """Generates GetDist MCSamples from a Fisher covariance matrix centered on fiducial cosmology."""
+    # Helper to resolve fiducial value for each parameter
+    def get_fid_val(p_name):
+        val = None
+        if isinstance(fiducial_cosmology, dict):
+            val = fiducial_cosmology.get(p_name)
+        elif hasattr(fiducial_cosmology, p_name):
+            val = getattr(fiducial_cosmology, p_name)
+        elif hasattr(fiducial_cosmology, "__getitem__"):
+            try:
+                val = fiducial_cosmology[p_name]
+            except Exception:
+                val = None
 
+        if val is None:
+            raise ValueError(f"Parameter '{p_name}' not found in fiducial_cosmology.")
+
+        # Ensure scalar float (handles PyCCL array attributes like m_nu)
+        if isinstance(val, (list, tuple, np.ndarray)):
+            val = np.sum(val)
+        return float(val)
+
+    fiducial_values = np.array([get_fid_val(p) for p in sampled_params])
+
+    # Ensure covariance is a numpy 2D square matrix
+    covariance = np.asarray(covariance, dtype=float)
+    if covariance.ndim != 2 or covariance.shape[0] != covariance.shape[1]:
+        raise ValueError(f"Covariance matrix must be square, got shape {covariance.shape}.")
+
+    # Draw rapid multivariate normal samples based on the Fisher covariance
+    samples = np.random.multivariate_normal(
+        fiducial_values, covariance, size=num_samples
+    )
+
+    # Apply uniform priors (hard cuts) if specified
+    if uniform_priors is not None:
+        mask = np.ones(num_samples, dtype=bool)
+        for i, p in enumerate(sampled_params):
+            if p in uniform_priors:
+                p_min, p_max = uniform_priors[p]
+                mask &= (samples[:, i] >= p_min) & (samples[:, i] <= p_max)
+        samples = samples[mask]
+
+    # Convert into a GetDist MCSamples object for seamless plotting
+    param_labels = [p for p in sampled_params]
+
+    mcsamples = MCSamples(
+        samples=samples,
+        names=sampled_params,
+        labels=param_labels,
+        name_tag=name_tag,
+    )
+
+    return mcsamples
+
+def plot_Fisher_from_matrices(
+    fiducial_cosmology,
+    Fisher_chains=None,
+    DESI_chains=None,
+    title="Fisher Forecast",
+    sampled_params=None,
+    params_to_plot=None,
+    save_plot=False,
+    plot_folder="plots/Fisher Forecasts",
+    num_samples=200000,
+):
+    """Plots Fisher and DESI chains on the same triangle plot with automatic parameter conversion."""
+    # Standardize parameters to plot
+    plot_params = (
+        params_to_plot if params_to_plot is not None else sampled_params
+    )
+    if plot_params is None:
+        plot_params = ["Omega_m", "w0", "wa", "h", "n_s", "A_s"]
+
+    raw_datasets = []
+    legend_labels = []
+    contour_colors = []
+
+    latex_labels = {
+        "Omega_m": r"\Omega_\mathrm{m}",
+        "Omega_b": r"\Omega_\mathrm{b}",
+        "Omega_k": r"\Omega_\mathrm{k}",
+        "Omega_c": r"\Omega_\mathrm{c}",
+        "Omega_lambda": r"\Omega_\mathrm{\Lambda}",
+        "wa": r"w_a",
+        "w0": r"w_0",
+        "h": r"h",
+        "A_s": r"A_\mathrm{s}",
+        "n_s": r"n_\mathrm{s}",
+        "Neff": r"N_\mathrm{eff}",
+        "m_nu": r"m_\mathrm{nu}",
+        "T_CMB": r"T_\mathrm{CMB}",
+    }
+    labels = [latex_labels.get(p, p) for p in plot_params]
+
+    # Color palettes for Fisher vs DESI chains
+    fisher_colors = ["firebrick", "darkorange", "crimson", "coral"]
+    desi_colors = ["navy", "teal", "mediumblue", "indigo"]
+
+    # 1. Process Fisher chains
+    if Fisher_chains is not None:
+        chains_list = (
+            Fisher_chains
+            if isinstance(Fisher_chains, list)
+            else [Fisher_chains]
+        )
+        for idx, fc in enumerate(chains_list):
+            raw_datasets.append(fc)
+            label = getattr(
+                fc,
+                "label",
+                "Fisher Forecast" if idx == 0 else f"Fisher #{idx+1}",
+            )
+            legend_labels.append(label)
+            contour_colors.append(fisher_colors[idx % len(fisher_colors)])
+
+    # 2. Process DESI chains
+    if DESI_chains is not None:
+        chains_list = (
+            DESI_chains if isinstance(DESI_chains, list) else [DESI_chains]
+        )
+        for idx, dc in enumerate(chains_list):
+            raw_datasets.append(dc)
+            label = getattr(
+                dc, "label", "DESI DR2" if idx == 0 else f"DESI DR2 #{idx+1}"
+            )
+            legend_labels.append(label)
+            contour_colors.append(desi_colors[idx % len(desi_colors)])
+
+    if not raw_datasets:
+        raise ValueError(
+            "No valid datasets provided in Fisher_chains or DESI_chains."
+        )
+
+    # Helper function to resolve parameter value/column from cosmology object or dict
+    def get_fiducial_val(p_name, fallback=0.0):
+        val = None
+        if isinstance(fiducial_cosmology, dict):
+            val = fiducial_cosmology.get(p_name, fallback)
+        elif hasattr(fiducial_cosmology, p_name):
+            val = getattr(fiducial_cosmology, p_name)
+        elif hasattr(fiducial_cosmology, "__getitem__"):
+            try:
+                val = fiducial_cosmology[p_name]
+            except Exception:
+                val = fallback
+        else:
+            val = fallback
+
+        if val is None:
+            val = fallback
+
+        # Convert array/list values (e.g. m_nu = [0.06, ...]) to a scalar float
+        if isinstance(val, (list, tuple, np.ndarray)):
+            val = np.sum(val)
+
+        return float(val)
+
+    # Helper function to extract, compute, and re-order parameter columns per dataset
+    def extract_param_samples(dataset, target_params):
+        if hasattr(dataset, "paramNames") and dataset.paramNames is not None:
+            existing_names = [p.name for p in dataset.paramNames.names]
+        elif hasattr(dataset, "names"):
+            existing_names = list(dataset.names)
+        else:
+            existing_names = (
+                sampled_params if sampled_params is not None else target_params
+            )
+
+        samples = dataset.samples if hasattr(dataset, "samples") else dataset
+        chain_len = samples.shape[0]
+        idx_map = {name: i for i, name in enumerate(existing_names)}
+
+        def get_col(p_name):
+            if p_name in idx_map:
+                return samples[:, idx_map[p_name]]
+            fid_val = get_fiducial_val(p_name, fallback=0.0)
+            return np.full(chain_len, fid_val)
+
+        projected_cols = []
+        for p in target_params:
+            if p in idx_map:
+                projected_cols.append(samples[:, idx_map[p]])
+            elif p == "Omega_m":
+                b = get_col("Omega_b")
+                c = get_col("Omega_c")
+                h = get_col("h")
+                m_nu = get_col("m_nu")
+                om_nu = m_nu / (h * h * 93.15) if np.any(m_nu != 0) else 0.0
+                projected_cols.append(b + c + om_nu)
+            elif p == "Omega_lambda":
+                b = get_col("Omega_b")
+                c = get_col("Omega_c")
+                k = get_col("Omega_k")
+                h = get_col("h")
+                m_nu = get_col("m_nu")
+                om_nu = m_nu / (h * h * 93.15) if np.any(m_nu != 0) else 0.0
+                projected_cols.append(1.0 - b - c - k - om_nu)
+            else:
+                projected_cols.append(get_col(p))
+
+        return np.column_stack(projected_cols)
+
+    # 3. Align datasets into GetDist MCSamples format
+    plot_datasets = []
+    for idx, ds in enumerate(raw_datasets):
+        aligned_samples = extract_param_samples(ds, plot_params)
+        weights = (
+            ds.weights
+            if hasattr(ds, "weights") and ds.weights is not None
+            else None
+        )
+
+        mcsamples = MCSamples(
+            samples=aligned_samples,
+            weights=weights,
+            names=plot_params,
+            labels=labels,
+            label=legend_labels[idx],
+        )
+        plot_datasets.append(mcsamples)
+
+    # 4. Generate GetDist Triangle Plot
+    n_params = len(plot_params)
+    g = plots.get_subplot_plotter(width_inch=2.2 * n_params)
+
+    # Extract fiducial values for plot markers
+    fiducial_vals = {}
+    for p in plot_params:
+        val = get_fiducial_val(p, fallback=None)
+        if val is not None:
+            fiducial_vals[p] = float(val)
+
+    g.triangle_plot(
+        plot_datasets,
+        params=plot_params,
+        filled=True,
+        contour_colors=contour_colors[: len(plot_datasets)],
+        legend_loc='upper center',            # Sets anchor point
+        legend_ncol=2,                         # Puts items side-by-side horizontally
+        subplots_hide_invisible=True,
+        # Pass bounding box into kwargs to push it below the plot
+        kwargs={'bbox_to_anchor': (0.5, -0.15)}, 
+        markers=fiducial_vals if len(fiducial_vals) > 0 else None,
+        title_limit=None,
+    )
+
+    if g.subplots is not None and g.subplots.size > 0:
+        plt.subplots_adjust(top=0.90)
+        plt.figtext(0.15, 0.98, title, fontsize=16, ha="left", va="top")
+
+    if save_plot:
+        os.makedirs(plot_folder, exist_ok=True)
+        filename = f"{title.replace(' ', '_')}.png"
+        plt.savefig(
+            os.path.join(plot_folder, filename),
+            bbox_inches="tight",
+            dpi=300,
+        )
+
+    return g
+    
 ## Plotting etc.    
 # get derivatives for select parameters 
 def get_partial_derivative(fiducial_values, param1, param2):
