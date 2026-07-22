@@ -1849,7 +1849,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         if desired_spectra != 'None':
             self.desired_spectra = desired_spectra
         elif self.cmb_primaries:
-            self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'ET', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
+            self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
         else:
             self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
         print("Spectra considered: ", self.desired_spectra)
