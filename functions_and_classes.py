@@ -121,12 +121,14 @@ def plot_Fisher_from_matrices(
     fiducial_cosmology,
     Fisher_chains=None,
     DESI_chains=None,
-    title="Fisher Forecast",
+    title=None,
     sampled_params=None,
     params_to_plot=None,
     save_plot=False,
     plot_folder="plots/Fisher Forecasts",
     num_samples=200000,
+    filled=[True, True, True, True, True, True],
+    line_styles=['-', '-', '-', '-', '-', '-']
 ):
     """Plots Fisher and DESI chains on the same triangle plot with automatic parameter conversion."""
     # Standardize parameters to plot
@@ -158,8 +160,29 @@ def plot_Fisher_from_matrices(
     labels = [latex_labels.get(p, p) for p in plot_params]
 
     # Color palettes for Fisher vs DESI chains
-    fisher_colors = ["firebrick", "darkorange", "crimson", "coral"]
-    desi_colors = ["navy", "teal", "mediumblue", "indigo"]
+    fisher_colors = ["purple"]
+    desi_colors = ["blue", "darkorange", "green", "pink"]
+
+
+    # 2. Process DESI chains
+    if DESI_chains is not None:
+        chains_list = (
+            DESI_chains if isinstance(DESI_chains, list) else [DESI_chains]
+        )
+
+        # If there are multiple DESI chains, put the first chain at the end so it plots on top
+        if len(chains_list) > 1:
+            reordered_desi = [chains_list[1], chains_list[2], chains_list[3], chains_list[0]]
+        else:
+            reordered_desi = chains_list
+            
+        for idx, dc in enumerate(chains_list):
+            raw_datasets.append(dc)
+            label = getattr(
+                dc, "label", "DESI DR2" if idx == 0 else f"DESI DR2 #{idx+1}"
+            )
+            legend_labels.append(label)
+            contour_colors.append(desi_colors[idx % len(desi_colors)])
 
     # 1. Process Fisher chains
     if Fisher_chains is not None:
@@ -177,20 +200,7 @@ def plot_Fisher_from_matrices(
             )
             legend_labels.append(label)
             contour_colors.append(fisher_colors[idx % len(fisher_colors)])
-
-    # 2. Process DESI chains
-    if DESI_chains is not None:
-        chains_list = (
-            DESI_chains if isinstance(DESI_chains, list) else [DESI_chains]
-        )
-        for idx, dc in enumerate(chains_list):
-            raw_datasets.append(dc)
-            label = getattr(
-                dc, "label", "DESI DR2" if idx == 0 else f"DESI DR2 #{idx+1}"
-            )
-            legend_labels.append(label)
-            contour_colors.append(desi_colors[idx % len(desi_colors)])
-
+            
     if not raw_datasets:
         raise ValueError(
             "No valid datasets provided in Fisher_chains or DESI_chains."
@@ -287,6 +297,7 @@ def plot_Fisher_from_matrices(
     # 4. Generate GetDist Triangle Plot
     n_params = len(plot_params)
     g = plots.get_subplot_plotter(width_inch=2.2 * n_params)
+    g.settings.legend_fontsize = 12
 
     # Extract fiducial values for plot markers
     fiducial_vals = {}
@@ -295,23 +306,50 @@ def plot_Fisher_from_matrices(
         if val is not None:
             fiducial_vals[p] = float(val)
 
+#    g.triangle_plot(
+#        plot_datasets,
+#        params=plot_params,
+#        filled=True,
+#        contour_colors=contour_colors[: len(plot_datasets)],
+#        #legend_loc='upper right',            # Sets anchor point
+#        legend_ncol=1,                         # Puts items vertically
+#        subplots_hide_invisible=True,
+#        # Pass bounding box into kwargs to push it below the plot
+#        #kwargs={'bbox_to_anchor': (0.35, 0.95)},
+#        legend_rect=[0.55, 0.65, 0.35, 0.25],
+#        markers=fiducial_vals if len(fiducial_vals) > 0 else None,
+#        title_limit=None,
+#    )
+
+ #   if contour_colors:
+ #       g.set_active_colors(contour_colors)
+
+    if contour_colors:
+        line_args = [{'color': c} for c in contour_colors]
+    else:
+        line_args = None
+        
     g.triangle_plot(
         plot_datasets,
         params=plot_params,
-        filled=True,
+        filled=filled,                       # Mix of filled and contour outlines
+        line_args=line_args,
         contour_colors=contour_colors[: len(plot_datasets)],
-        legend_loc='upper center',            # Sets anchor point
-        legend_ncol=2,                         # Puts items side-by-side horizontally
+        legend_ncol=1,
         subplots_hide_invisible=True,
-        # Pass bounding box into kwargs to push it below the plot
-        kwargs={'bbox_to_anchor': (0.5, -0.15)}, 
+        kwargs={
+            # Adjust x (0.55-0.60) to push it to the top right
+            'bbox_to_anchor': (0.60, 0.65, 0.35, 0.25),
+            'loc': 'upper right',  # Anchors the legend box's top-right corner
+            'mode': 'expand',     # Forces fixed (width, height) box dimensions
+            'borderaxespad': 0.0, # Removes extra automatic padding shifts
+        },
         markers=fiducial_vals if len(fiducial_vals) > 0 else None,
         title_limit=None,
     )
-
+    
     if g.subplots is not None and g.subplots.size > 0:
         plt.subplots_adjust(top=0.90)
-        plt.figtext(0.15, 0.98, title, fontsize=16, ha="left", va="top")
 
     if save_plot:
         os.makedirs(plot_folder, exist_ok=True)
@@ -319,7 +357,7 @@ def plot_Fisher_from_matrices(
         plt.savefig(
             os.path.join(plot_folder, filename),
             bbox_inches="tight",
-            dpi=300,
+            dpi=1200,
         )
 
     return g
@@ -1491,7 +1529,13 @@ def build_covariance_from_data(
     cosmo,
     lens_data,
     source_data,
-    f_sky,
+    f_sky_c, # sky fraction for cmb 
+    f_sky_g, # sky fraction for lens galaxies
+    f_sky_l, # sky fraction for source galaxies
+    f_sky_c_g, # sky overlap for cmb and lens galaxies
+    f_sky_c_l, # sky overlap for cmb and source galaxies
+    f_sky_g_l, # sky overlap for source and lens galaxies
+    f_sky_c_g_l, # sky overlap for cmb and source and lens galaxies
     l_min=2,
     n_ell=3000, 
     binsize=1,  
@@ -1523,7 +1567,7 @@ def build_covariance_from_data(
     full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator, cmb_primaries = cmb_primaries)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
-    full_cov = CovarianceMatrix(full_f_map, full_spectra_dict, f_sky, binsize=binsize)
+    full_cov = CovarianceMatrix(full_f_map, full_spectra_dict, f_sky_c, f_sky_g, f_sky_l, f_sky_c_g, f_sky_c_l, f_sky_g_l, f_sky_c_g_l, binsize=binsize)
 
     if desired_spectra is None:
         return full_cov, full_spectra_dict, full_f_map
@@ -1879,10 +1923,16 @@ class ForecastMap:
 # this is a class that is a massive covariance matrix
 class CovarianceMatrix:
     # initialize
-    def __init__(self, f_map, spectra_dict, f_sky, binsize=1):
+    def __init__(self, f_map, spectra_dict, f_sky_c, f_sky_g, f_sky_l, f_sky_c_g, f_sky_c_l, f_sky_g_l, f_sky_c_g_l, binsize=1):
         self.f_map = f_map # ForecastMap object
         self.spectra_dict = spectra_dict #dictionary mapping (tracer1, tracer2) to C_l^(tracer1, tracer2) array of length n_ell
-        self.f_sky = f_sky
+        self.f_sky_c = f_sky_c 
+        self.f_sky_g = f_sky_g
+        self.f_sky_l = f_sky_l 
+        self.f_sky_c_g = f_sky_c_g
+        self.f_sky_c_l = f_sky_c_l
+        self.f_sky_g_l = f_sky_g_l
+        self.f_sky_c_g_l = f_sky_c_g_l
         self.binsize = binsize
 
         # N_ell from ForecastMap is the original, unbinned number of ell values
@@ -1900,6 +1950,41 @@ class CovarianceMatrix:
         # build covariance
         self._build_master_covariance()
 
+    # get correct f_sky 
+    def get_f_sky(self, pair_A, pair_B):
+        fields = list(pair_A) + list(pair_B)
+        
+        # Classify each tracer field into 'C' (CMB), 'G' (Lens Galaxies), or 'L' (Source Lensing)
+        categories = set()
+        for f in fields:
+            # Check string prefixes/names based on your field naming scheme
+            if f in ('T', 'E', 'kappa_c'):
+                categories.add('C')
+            elif f.startswith('g'):        # e.g., 'g1', 'g2' (lens galaxies)
+                categories.add('G')
+            elif f.startswith('kappa_g'):  # e.g., 'kappa_g1' (source galaxy lensing)
+                categories.add('L')
+            else:
+                raise ValueError(f"Unknown field tracer: {f}")
+    
+        # Map the unique categories present in the 4-field set to the corresponding f_sky
+        if categories == {'C'}:
+            return self.f_sky_c
+        if categories == {'G'}:
+            return self.f_sky_g
+        if categories == {'L'}:
+            return self.f_sky_l
+        elif categories == {'C', 'G'}:
+            return self.f_sky_c_g
+        elif categories == {'C', 'L'}:
+            return self.f_sky_c_l
+        elif categories == {'G', 'L'}:
+            return self.f_sky_g_l
+        elif categories == {'C', 'G', 'L'}:
+            return self.f_sky_c_g_l
+        else:
+            raise ValueError(f"Unhandled tracer field combination: {categories}")
+            
     def _compute_block(self, pair_A, pair_B):
         # ells from 2 to N_ell_unbinned + 1, so the indices i directly correspond to ell_values[i-2]
         ells_unbinned = np.arange(self.l_min, self.N_ell_unbinned + self.l_min)
@@ -1951,7 +2036,9 @@ class CovarianceMatrix:
 
             # Calculate the unbinned covariance terms for the diagonal elements within this bin
             # We average the (Cl_ac*Cl_bd + Cl_ad*Cl_bc) / (2ell+1) for all ell in the bin
-            denom_factors = (2 * current_ells_for_bin + 1) * self.f_sky
+            # fsky depends on which covariance is being calculated
+            f_sky = self.get_f_sky(pair_A, pair_B)
+            denom_factors = (2 * current_ells_for_bin + 1) * f_sky
 
             # Avoid division by zero
             denom_factors[denom_factors == 0] = np.inf
@@ -2066,7 +2153,7 @@ def instrument_Pk2D(pk2d_object):
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ## LIKELIHOODS 
-
+###### FIX TO INCLUDE ALL THE FSKYS
 # SO DESI Likelihood (w/ or w/o emulator, w or w/o primaries) 
 class SO_x_DESI_Likelihood(Likelihood):
 
@@ -2365,7 +2452,8 @@ class SO_x_DESI_Likelihood(Likelihood):
 
 # Fisher Forecast class
 class FisherForecaster:
-    def __init__(self, cosmology, lens_data, source_data, f_sky=0.4, l_min = 2, n_ell=5000, binsize=50, 
+    def __init__(self, cosmology, lens_data, source_data, f_sky_c=0.4, f_sky_g=None, f_sky_l=None, f_sky_c_g=None, f_sky_c_l=None, f_sky_g_l=None, 
+                 f_sky_c_g_l=None, l_min = 2, n_ell=5000, binsize=50, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024, 
@@ -2382,7 +2470,8 @@ class FisherForecaster:
         self.additional_Fisher_params=additional_Fisher_params
         
         self.survey_params = {
-            'f_sky': f_sky, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
+            'f_sky_c': f_sky_c, 'f_sky_g': f_sky_g, 'f_sky_l': f_sky_l, 'f_sky_c_g': f_sky_c_g, 'f_sky_c_l': f_sky_c_l, 'f_sky_g_l': f_sky_g_l, 
+            'f_sky_c_g_l': f_sky_c_g_l, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
             'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
