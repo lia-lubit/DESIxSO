@@ -7,6 +7,8 @@ import inspect
 import yaml
 import time
 import types
+import glob
+import re
 
 # scientific stack
 import numpy as np
@@ -54,6 +56,116 @@ print("LOADING FILE:", os.path.abspath(__file__))
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ### FUNCTIONS
+def load_txt_fisher_matrices(file_pattern="Fisher Forecasts/Fisher Matrices/*_Binsize=*.txt"):
+    
+    files = sorted(glob.glob(file_pattern))
+    fisher_dict = {}
+    param_names_dict = {}
+    
+    for filepath in files:
+        match = re.search(r'Binsize=(\d+)', filepath)
+        if match:
+            binsize = int(match.group(1))
+
+            print("Filepath: ", filepath)
+            # Read header text directly to parse parameter names
+            param_names = []
+            with open(filepath, 'r') as f:
+                lines = [f.readline(), f.readline()]
+                for line in lines:
+                    clean = line.strip('# \n')
+                    if clean and not clean.startswith("Fiducial"):
+                        param_names = clean.split()
+            
+            try:
+                # Force numpy to skip the 2 text header rows
+                matrix = np.loadtxt(filepath, skiprows=2)
+                if matrix.ndim == 2 and matrix.size > 0:
+                    fisher_dict[binsize] = matrix
+                    param_names_dict[binsize] = param_names
+            except Exception as e:
+                print(f"Failed to load {filepath}: {e}")
+                    
+    return fisher_dict, param_names_dict
+
+def analyze_fisher_matrices(fisher_dict):
+
+    binsizes = sorted(fisher_dict.keys())
+    
+    results = {
+        'binsize': [],
+        'trace': [],
+        'log_det': [],
+        'marginal_errors': [],
+        'unmarginal_errors': []
+    }
+    
+    print(f"{'Bin Size':<10} | {'Trace F':<14} | {'log det(F)':<12} | Status")
+    print("-" * 52)
+    
+    for b in binsizes:
+        F = fisher_dict[b]
+        
+        tr = np.trace(F)
+        sign, logdet = np.linalg.slogdet(F)
+        
+        # Unmarginalized error (1 / sqrt(F_ii))
+        unmarg_errs = 1.0 / np.sqrt(np.diag(F))
+        
+        # Marginalized error sqrt((F^-1)_ii)
+        try:
+            Cov = np.linalg.inv(F)
+            marg_errs = np.sqrt(np.diag(Cov))
+            status = "OK"
+        except np.linalg.LinAlgError:
+            marg_errs = np.full(F.shape[0], np.nan)
+            status = "Singular (Inv Failed)"
+            
+        results['binsize'].append(b)
+        results['trace'].append(tr)
+        results['log_det'].append(logdet)
+        results['marginal_errors'].append(marg_errs)
+        results['unmarginal_errors'].append(unmarg_errs)
+        
+        print(f"{b:<10} | {tr:<14.4e} | {logdet:<12.4f} | {status}")
+        
+    return results
+
+def plot_fisher_diagnostics(results, param_names=None):
+
+    binsizes = np.array(results['binsize'])
+    traces = np.array(results['trace'])
+    marginal_errs = np.array(results['marginal_errors'])
+    
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    
+    # 1. Mode Density Check: Trace vs Delta_ell
+    axes[0].plot(binsizes, traces, 'o-', color='navy', label=r'Observed $\text{Tr}(F)$')
+    
+    axes[0].set_xlabel(r'Bin Size ($\Delta\ell$)')
+    axes[0].set_ylabel(r'Fisher Trace $\text{Tr}(F)$')
+    axes[0].set_title('Fisher Trace vs Bin Size (Mode Counting Diagnostic)')
+    axes[0].legend()
+    axes[0].grid(True, linestyle='--', alpha=0.5)
+    
+    # 2. Marginalized 1D Uncertainty vs Bin Size
+    if marginal_errs.ndim > 1:
+        num_params = marginal_errs.shape[1]
+        if param_names is None or len(param_names) != num_params:
+            param_names = [f'Param {i}' for i in range(num_params)]
+            
+        for i, name in enumerate(param_names):
+            axes[1].plot(binsizes, marginal_errs[:, i], 's--', label=name)
+            
+    axes[1].set_xlabel(r'Bin Size ($\Delta\ell$)')
+    axes[1].set_ylabel(r'Marginalized Uncertainty $\sigma(\theta)$')
+    axes[1].set_title('1D Parameter Constraints vs Bin Size')
+    axes[1].legend()
+    axes[1].grid(True, linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    plt.show()
+    
 def sample_fisher_with_uniform_priors(
     fiducial_cosmology,
     sampled_params,
@@ -151,6 +263,7 @@ def plot_Fisher_from_matrices(
         "wa": r"w_a",
         "w0": r"w_0",
         "h": r"h",
+        "logA_s": r"logA_\mathrm{s}",
         "A_s": r"A_\mathrm{s}",
         "n_s": r"n_\mathrm{s}",
         "Neff": r"N_\mathrm{eff}",
@@ -494,6 +607,7 @@ def plot_cobaya_mcmc_results(chain_dir, yaml_path, sampled_params, plot_params, 
         'w0': r'w_0',
         'h': r'h',
         'A_s': r'A_\mathrm{s}',
+        'logA_s': r'logA_\mathrm{s}',
         'n_s': r'n_\mathrm{s}',
         'Neff': r'N_\mathrm{eff}',
         'm_nu': r'm_\mathrm{nu}',
@@ -854,8 +968,65 @@ def calculate_and_plot_Cls(
 
     # CMB lensing-CMB lensing auto-corr spectra
     if 'CC' in correlation_types:
-        cl = cosmology.angular_cl(cmb_lensing_tracer, cmb_lensing_tracer, ell_values, p_of_k_a = Pk2D_object)
-        cl_spectra[f'CC'] = cl
+        #cl = cosmology.angular_cl(cmb_lensing_tracer, cmb_lensing_tracer, ell_values, p_of_k_a = Pk2D_object)
+        #cl_spectra[f'CC'] = cl
+        h = cosmology['h']
+        ombh2 = cosmology['Omega_b'] * (h**2)
+        omch2 = cosmology['Omega_c'] * (h**2)
+        A_s = cosmology['A_s']
+        n_s = cosmology['n_s']
+        Omega_k = cosmology['Omega_k']
+        w0 = cosmology['w0']
+        wa = cosmology['wa']
+        Neff = cosmology['Neff']
+        m_nu = cosmology['m_nu']
+        T_CMB = cosmology['T_CMB']
+        l_max = n_ell + l_min
+
+        # fix the error wherein it thinks m_nu is a list
+        if hasattr(m_nu, '__len__') or isinstance(m_nu, (list, np.ndarray)):
+            m_nu = np.sum(m_nu)
+
+        # tau isn't currently in your cosmology object — grab it if present,
+        # otherwise fall back to a default. Worth adding to `cosmology`
+        # properly if you want it to vary.
+        tau = cosmology.get('tau', 0.0544) if hasattr(cosmology, 'get') else 0.0544
+
+        pars = camb.CAMBparams()
+        pars.set_cosmology(
+            H0=100.0 * h,
+            ombh2=ombh2,
+            omch2=omch2,
+            omk=Omega_k,
+            mnu=m_nu,
+            nnu=Neff,
+            tau=tau,
+            TCMB=T_CMB,
+        )
+        pars.InitPower.set_params(As=A_s, ns=n_s)
+        pars.set_dark_energy(w=w0, wa=wa, dark_energy_model='ppf')
+
+        # match nonlinear treatment to whatever pyccl is using elsewhere,
+        # if your primary spectra assume nonlinear lensing
+        pars.NonLinear = camb.model.NonLinear_both
+
+        pars.set_for_lmax(l_max, lens_potential_accuracy=1)
+
+        results = camb.get_results(pars)
+
+        lens_cls = results.get_lens_potential_cls(lmax=l_max, raw_cl=True)
+        ls = np.arange(lens_cls.shape[0])
+        clpp = lens_cls[:, 0]
+
+        factor = (ls * (ls + 1) / 2.0)**2
+        clkk_full = factor * clpp
+
+        # interpolate onto the same ell_values grid used by your pyccl spectra,
+        # so cl_spectra['CC'] is consistent with everything else in the dict
+        clkk = np.interp(ell_values, ls, clkk_full)
+
+        cl_spectra['CC'] = clkk
+
 
     ## PRIMARY SPECTRA
     cmb_primary_requested = [spec for spec in correlation_types if spec.upper() in ['TT', 'EE', 'BB', 'TE']]
@@ -943,6 +1114,7 @@ def calculate_and_plot_Cls(
 # plot the covariance matrix, or a subset thereof
 # if no specific desired spectra are given, the whole matrix will be plotted
 #### CHECK
+##### ADD LOGARITHMIC BINNING
 def plot_covariance_matrix(
     cov_obj,
     spectra_dict,
@@ -1057,6 +1229,7 @@ def plot_covariance_matrix(
 
     return subset_matrix
 
+##### ADD LOGARITHMIC BINNING
 def plot_correlation_matrix(
     cov_obj,
     spectra_dict,
@@ -1238,25 +1411,32 @@ def plot_spectra_from_dict(spectra_dict, title_prefix='Angular Power Spectrum', 
 ## Covariances etc
 
 # build data vector
-def build_data_vector(forecast_map, spectra_dict, n_ell, binsize): 
-    
-    observed_data_vector = np.array([])
-    num_binned_ells = int(np.ceil(n_ell / binsize))
-    
-    for pair in forecast_map.pairs:
-        unbinned_cls = spectra_dict[pair]
+def build_data_vector(forecast_map, spectra_dict, n_ell, binsize, logarithmic=False, l_min=2):
+    ells = np.arange(l_min, l_min + n_ell)
+    observed_data_vector = []
+
+    for pair in forecast_map.pairs:  # ordered list of (a, b) tuples
+        if pair in spectra_dict:
+            unbinned_cls = spectra_dict[pair]
+        elif pair[::-1] in spectra_dict:
+            unbinned_cls = spectra_dict[pair[::-1]]
+        else:
+            print(f"spectrum for {pair} not found, assuming zero.")
+            unbinned_cls = np.zeros(n_ell)
+
         binned_cls_for_pair = []
         for i in range(0, n_ell, binsize):
-            end_idx = min(i + binsize, len(unbinned_cls))
-            if i < end_idx:
-                binned_cls_for_pair.append(np.mean(unbinned_cls[i:end_idx]))
-            else:
-                binned_cls_for_pair.append(0.0)
-        while len(binned_cls_for_pair) < num_binned_ells:
-            binned_cls_for_pair.append(0.0)
-        observed_data_vector = np.concatenate((observed_data_vector, binned_cls_for_pair))
+            end_idx = min(i + binsize, n_ell)
+            bin_cls = unbinned_cls[i:end_idx]
+            bin_ells = ells[i:end_idx]
+            weights = 2 * bin_ells + 1
 
-    return observed_data_vector
+            weighted_mean = np.sum(weights * bin_cls) / np.sum(weights)
+            binned_cls_for_pair.append(weighted_mean)
+
+        observed_data_vector.extend(binned_cls_for_pair)
+
+    return np.array(observed_data_vector)
     
 # compute general spectra with noise
 # z_max and n_chi are given by the examples in pyccl
@@ -1431,9 +1611,8 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         lens_bins = [k for k in tracer_dict.keys() if k.startswith('g')]
         source_bins = [k for k in tracer_dict.keys() if k.startswith('kappa_g')]
 
-        #### CHECK
         # E-mode cross-correlations cannot be simply calculated with PyCCL or CAMB
-        # for the moment they are set to zero
+        # they are negligable and are set to zero
         if 'kappa_c' in tracer_dict:
             spectra_dict[('E', 'kappa_c')] = np.zeros_like(ells) 
         
@@ -2037,17 +2216,20 @@ class CovarianceMatrix:
             # Calculate the unbinned covariance terms for the diagonal elements within this bin
             # We average the (Cl_ac*Cl_bd + Cl_ad*Cl_bc) / (2ell+1) for all ell in the bin
             # fsky depends on which covariance is being calculated
+            weights = 2 * current_ells_for_bin + 1
             f_sky = self.get_f_sky(pair_A, pair_B)
-            denom_factors = (2 * current_ells_for_bin + 1) * f_sky
+            #denom_factors = (2 * current_ells_for_bin + 1) * f_sky
 
             # Avoid division by zero
-            denom_factors[denom_factors == 0] = np.inf
-
+            #denom_factors[denom_factors == 0] = np.inf
+            unbinned_var_ell = (current_Cl_ac * current_Cl_bd + current_Cl_ad * current_Cl_bc) / (weights * f_sky)
+            
             # calculate each covariance value
-            cov_terms_unbinned_diag = (current_Cl_ac * current_Cl_bd + current_Cl_ad * current_Cl_bc) / denom_factors
+            #cov_terms_unbinned_diag = (current_Cl_ac * current_Cl_bd + current_Cl_ad * current_Cl_bc) / denom_factors
 
             # average covariance values in the bin
-            binned_block[i_bin, i_bin] = np.sum(cov_terms_unbinned_diag) / (self.binsize ** 2)
+            #binned_block[i_bin, i_bin] = np.sum(cov_terms_unbinned_diag) / (self.binsize ** 2)
+            binned_block[i_bin, i_bin] = np.sum((weights ** 2) * unbinned_var_ell) / (np.sum(weights) ** 2)
 
         return binned_block
 
@@ -2080,75 +2262,6 @@ class CovarianceMatrix:
         # return covariance value for two spectra and a specific binned ell index
         sA, sB = self.block_slices[(pair_A, pair_B)]
         return self.matrix[sA.start + ell_bin_idx, sB.start + ell_bin_idx]
-
-# class to get us information on the time taken to call the Pk2D object within PyCCL
-class Pk2DTimer:
-    def __init__(self):
-        self.total_time_spent = 0.0
-        self.call_count = 0
-
-    def reset_timers(self):
-        self.total_time_spent = 0.0
-        self.call_count = 0
-        print("Pk2D timers and counters reset.")
-
-    def get_timing_info(self):
-        return {"total_time_ns": self.total_time_spent, "call_count": self.call_count}
-
-# wrapper to get us information on the time taken to call the Pk2D object within PyCCL
-#### Fix if desired
-def instrument_Pk2D(pk2d_object):
-    if not isinstance(pk2d_object, ccl.Pk2D):
-        raise TypeError("pk2d_object must be an instance of ccl.Pk2D")
-
-    # check if already instrumented (to prevent infinite recursion if called multiple times on the same object)
-    if hasattr(pk2d_object, '_timer') and hasattr(pk2d_object, '_original_call_func'):
-        print("Warning: Pk2D object already instrumented. Resetting timer.")
-        pk2d_object.reset_timers()
-        return pk2d_object
-
-    print(f"Original Pk2D __call__ type: {type(pk2d_object.__call__)}")
-    # attach a Pk2DTimer instance to the Pk2D object
-    pk2d_object._timer = Pk2DTimer()
-
-    # store the original __call__ method (bound method)
-    original_call_bound = pk2d_object.__call__
-    # store the underlying function of the original method
-    original_call_func = original_call_bound.__func__
-    # store it on the object so the new timed_call can reliably access it
-    pk2d_object._original_call_func = original_call_func
-
-    original_cosmo_attribute = getattr(original_call_bound, '_cosmo', None)
-
-    # define a new __call__ method that includes timing
-    # this new method will be bound to the pk2d_object instance later
-    def timed_call(self, k, a, cosmo=None, derivative=None): # Match pyccl's signature
-        print("DEBUG: Inside timed_call") 
-        self._timer.call_count += 1
-        start_time = time.perf_counter_ns()
-        # Call the original underlying function, manually passing 'self' (which is the pk2d_object)
-        # Using the stored _original_call_func to avoid closure issues.
-        pk_value = self._original_call_func(self, k, a, cosmo=cosmo, derivative=derivative)
-        end_time = time.perf_counter_ns()
-        self._timer.total_time_spent += (end_time - start_time)
-        return pk_value
-
-    # ALWAYS set the _cosmo attribute on the new `timed_call` function object.
-    # this ensures that `self.__call__._cosmo` (which becomes `timed_call._cosmo`)
-    # always exists, preventing the AttributeError.
-    timed_call._cosmo = original_cosmo_attribute
-
-    # replace the __call__ method of the *instance*
-    # use types.MethodType to correctly bind the new method to the instance
-    pk2d_object.__call__ = types.MethodType(timed_call, pk2d_object)
-    print(f"New Pk2D __call__ type after instrumentation: {type(pk2d_object.__call__)}")
-
-    # add convenience methods directly to the pk2d_object for easier access
-    pk2d_object.reset_timers = pk2d_object._timer.reset_timers
-    pk2d_object.get_timing_info = pk2d_object._timer.get_timing_info
-
-    print("Pk2D object instrumented for timing.")
-    return pk2d_object
 
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
@@ -2191,7 +2304,12 @@ class SO_x_DESI_Likelihood(Likelihood):
             self.boost_emulator = None
         
         # extract necessary data specifications from the Cobaya input YAML/dictionary
-        self.f_sky = self.data_specs.get('f_sky') # default to 0.4 if not provided
+        self.f_sky_c = self.data_specs.get('f_sky_c') 
+        self.f_sky_g = self.data_specs.get('f_sky_g') 
+        self.f_sky_l = self.data_specs.get('f_sky_l') 
+        self.f_sky_c_g = self.data_specs.get('f_sky_c_g') 
+        self.f_sky_g_l = self.data_specs.get('f_sky_g_l') 
+        self.f_sky_c_g_l = self.data_specs.get('f_sky_c_g_l') 
         self.l_min = self.data_specs.get('l_min') # max unbinned ell
         self.n_ell = self.data_specs.get('n_ell') # max unbinned ell
         self.binsize = self.data_specs.get('binsize') # binning size for ell
@@ -2205,7 +2323,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         if desired_spectra != 'None':
             self.desired_spectra = desired_spectra
         elif self.cmb_primaries:
-            self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'EE', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
+            self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG', 'TT', 'TE', 'EE', 'GT', 'LT', 'CT', 'EG', 'EL', 'CE']
         else:
             self.desired_spectra = ['GG', 'LL', 'GL', 'CC', 'CL', 'CG']
         print("Spectra considered: ", self.desired_spectra)
@@ -2321,7 +2439,13 @@ class SO_x_DESI_Likelihood(Likelihood):
                     self.fiducial_cosmology,
                     self.lens_data,
                     self.source_data,
-                    f_sky=self.f_sky,
+                    f_sky_c = self.f_sky_c,
+                    f_sky_g = self.f_sky_g,
+                    f_sky_l = self.f_sky_l,
+                    f_sky_c_g = self.f_sky_c_g,
+                    f_sky_c_l = self.f_sky_c_l,
+                    f_sky_g_l = self.f_sky_g_l,
+                    f_sky_c_g_l = self.f_sky_c_g_l,
                     l_min=self.l_min,
                     n_ell=self.n_ell,
                     binsize=self.binsize,
@@ -2449,7 +2573,7 @@ class SO_x_DESI_Likelihood(Likelihood):
         return chi2
         
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
-
+##### CHECK TO MAKE SURE EQUATIONS AND LOGA_s ARE CORRECT
 # Fisher Forecast class
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky_c=0.4, f_sky_g=None, f_sky_l=None, f_sky_c_g=None, f_sky_c_l=None, f_sky_g_l=None, 
@@ -2488,7 +2612,9 @@ class FisherForecaster:
         
         # extract and freeze our baseline fiducial truths
         self.fiducial_dict = self._extract_param_dict(self.cosmology)
-        
+        fiducial_logAs = np.log(1e10 * self.cosmology["A_s"])
+        self.fiducial_dict["logA_s"] = fiducial_logAs
+
         # matrices initialized to None until computed
         self.F = None    # Fisher matrix
         self.cov = None  # parameter covariance matrix
@@ -2574,73 +2700,104 @@ class FisherForecaster:
             for i in range(0, p['n_ell'], p['binsize']):
                 end_idx = min(i + p['binsize'], len(unbinned_cls))
                 if i < end_idx:
-                    model_data_vector.append(np.mean(unbinned_cls[i:end_idx]))
+                    ### TESTING WITH WEIGHTS
+                    bin_cls = unbinned_cls[i:end_idx]
+                    bin_ells = self.ells[i:end_idx]
+                    weights = 2 * bin_ells + 1
+                    
+                    # Mode-weighted average: sum((2l+1) * C_l) / sum(2l+1)
+                    weighted_mean = np.sum(weights * bin_cls) / np.sum(weights)
+                    model_data_vector.append(weighted_mean)
+                    
+                    # model_data_vector.append(np.mean(unbinned_cls[i:end_idx]))
                 else:
                     model_data_vector.append(0.0)
         
         return np.array(model_data_vector)
 
     # manually compute derivatives
+    # 5-point stencil
     def get_derivatives(self, desired_params):
         C_derivatives = {}
         mu_derivatives = {}
         p = self.survey_params
-        
-        for param in desired_params:
+    
+        # Determine parameter names to iterate over
+        has_logAs = "logA_s" in desired_params or "ln_10_10_As" in desired_params
+        logAs_key = "logA_s" if "logA_s" in desired_params else "ln_10_10_As"
+    
+        # Map requested params to keys present in fiducial_dict
+        eval_params = [p if p not in ["logA_s", "ln_10_10_As"] else "A_s" for p in desired_params]
+    
+        for param in set(eval_params):
             step = self.step_dict.get(param)
             
-            params_up = self.fiducial_dict.copy()
-            params_down = self.fiducial_dict.copy()
-            params_up[param] += step
-            params_down[param] -= step
+            # Setup parameter variations for 5-point stencil
+            params_up1   = self.fiducial_dict.copy()
+            params_up2   = self.fiducial_dict.copy()
+            params_down1 = self.fiducial_dict.copy()
+            params_down2 = self.fiducial_dict.copy()
 
-            # I'll vary the fundamental pyccl/camb parameters 
-            # and then at the end get from those parameters to the derived ones
-            cosmology_up = ccl.Cosmology(
-                Omega_c = params_up['Omega_c'],
-                Omega_b = params_up['Omega_b'],
-                Omega_k = params_up['Omega_k'],
-                h       = params_up['h'],
-                A_s     = params_up['A_s'],
-                n_s     = params_up['n_s'],
-                w0      = params_up['w0'],
-                wa      = params_up['wa'],
-                Neff    = params_up['Neff'],
-                m_nu    = params_up['m_nu'],
-                T_CMB   = params_up['T_CMB'],
-                transfer_function = 'boltzmann_camb',
-                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
-            )
-            
-            cosmology_down = ccl.Cosmology(
-                Omega_c = params_down['Omega_c'],
-                Omega_b = params_down['Omega_b'],
-                Omega_k = params_down['Omega_k'],
-                h       = params_down['h'],
-                A_s     = params_down['A_s'],
-                n_s     = params_down['n_s'],
-                w0      = params_down['w0'],
-                wa      = params_down['wa'],
-                Neff    = params_down['Neff'],
-                m_nu    = params_down['m_nu'],
-                T_CMB   = params_down['T_CMB'],
-                transfer_function = 'boltzmann_camb',
-                extra_parameters={"camb": {"dark_energy_model": "ppf"}}
-            )
-            
-            cosmology_up.compute_growth()
-            cosmology_down.compute_growth()
+            params_up1[param]   += step
+            params_up2[param]   += 2.0 * step
+            params_down1[param] -= step
+            params_down2[param] -= 2.0 * step
 
-            mu_up = self.build_theory_vector(cosmology_up)
-            mu_down = self.build_theory_vector(cosmology_down)
-            mu_derivatives[param] = (mu_up - mu_down) / (2.0 * step)
+            # Helper function to initialize CCL cosmology and compute growth
+            def make_cosmo(p_dict):
+                cosmo = ccl.Cosmology(
+                    Omega_c = p_dict['Omega_c'],
+                    Omega_b = p_dict['Omega_b'],
+                    Omega_k = p_dict['Omega_k'],
+                    h       = p_dict['h'],
+                    A_s     = p_dict['A_s'],
+                    n_s     = p_dict['n_s'],
+                    w0      = p_dict['w0'],
+                    wa      = p_dict['wa'],
+                    Neff    = p_dict['Neff'],
+                    m_nu    = p_dict['m_nu'],
+                    T_CMB   = p_dict['T_CMB'],
+                    transfer_function = 'boltzmann_camb',
+                    extra_parameters={"camb": {"dark_energy_model": "ppf"}}
+                )
+                cosmo.compute_growth()
+                return cosmo
 
-            cov_obj_up, _, _ = build_covariance_from_data(cosmology_up, self.lens_data, self.source_data, **p)
-            cov_obj_down, _, _ = build_covariance_from_data(cosmology_down, self.lens_data, self.source_data, **p)
-            C_derivatives[param] = (cov_obj_up.matrix - cov_obj_down.matrix) / (2.0 * step)
+            cosmo_up1   = make_cosmo(params_up1)
+            cosmo_up2   = make_cosmo(params_up2)
+            cosmo_down1 = make_cosmo(params_down1)
+            cosmo_down2 = make_cosmo(params_down2)
+
+            # Theory vector derivatives (mu)
+            mu_up1   = self.build_theory_vector(cosmo_up1)
+            mu_up2   = self.build_theory_vector(cosmo_up2)
+            mu_down1 = self.build_theory_vector(cosmo_down1)
+            mu_down2 = self.build_theory_vector(cosmo_down2)
+
+            mu_derivatives[param] = (-mu_up2 + 8.0 * mu_up1 - 8.0 * mu_down1 + mu_down2) / (12.0 * step)
+
+            # Covariance matrix derivatives (C)
+            cov_up1, _, _   = build_covariance_from_data(cosmo_up1, self.lens_data, self.source_data, **p)
+            cov_up2, _, _   = build_covariance_from_data(cosmo_up2, self.lens_data, self.source_data, **p)
+            cov_down1, _, _ = build_covariance_from_data(cosmo_down1, self.lens_data, self.source_data, **p)
+            cov_down2, _, _ = build_covariance_from_data(cosmo_down2, self.lens_data, self.source_data, **p)
+
+            C_derivatives[param] = (-cov_up2.matrix + 8.0 * cov_up1.matrix - 8.0 * cov_down1.matrix + cov_down2.matrix) / (12.0 * step)
+    
+        # Convert A_s derivative to logA_s derivative: d(f)/d(ln 10^10 A_s) = A_s * d(f)/dA_s
+        if has_logAs and "A_s" in C_derivatives:
+            print("Converting from derivatives wrt A_s to derivatives wrt log10^10A_s")
+            fiducial_As = self.fiducial_dict["A_s"]
             
+            C_derivatives[logAs_key] = C_derivatives["A_s"] * fiducial_As
+            mu_derivatives[logAs_key] = mu_derivatives["A_s"] * fiducial_As
+    
+            if "A_s" not in desired_params:
+                del C_derivatives["A_s"]
+                del mu_derivatives["A_s"]
+    
         return C_derivatives, mu_derivatives
-
+    
     # plot derivatives of spectra wrt different parameters
     def plot_derivatives(self, desired_params=None, normalized=False):
         
@@ -2716,6 +2873,7 @@ class FisherForecaster:
             desired_params = ['Omega_c', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b', 'Omega_k', 'Neff', 'm_nu', 'T_CMB']
         
         self.desired_params = desired_params
+        
         p = self.survey_params
         if self.additional_Fisher_params is not None and self.desired_params != self.additional_Fisher_params:
             print("WARNING: the built Fisher matrix and the additional Fisher matrix DO NOT HAVE THE SAME PARAMETERS.")
@@ -2847,6 +3005,7 @@ class FisherForecaster:
                         'w0': r'w_0',
                         'h': r'h',
                         'A_s': r'A_\mathrm{s}',
+                        'logA_s': r'logA_\mathrm{s}',
                         'n_s': r'n_\mathrm{s}',
                         'Neff': r'N_\mathrm{eff}',
                         'm_nu': r'm_\mathrm{nu}',
@@ -3106,7 +3265,7 @@ class FisherForecaster:
                     if "=" in val_2sig:
                         val_2sig = val_2sig.split("=")[-1].strip()
                     
-                    # Rebuild the string using your beautiful latex_label_map entry
+                    # Rebuild the string using latex_label_map entry
                     str_1sig = f"${display_label} = {val_1sig}$"
                     str_2sig = f"${display_label} = {val_2sig}$"
                         
