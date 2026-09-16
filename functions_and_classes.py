@@ -9,6 +9,7 @@ import time
 import types
 import glob
 import re
+from copy import copy
 
 # scientific stack
 import numpy as np
@@ -56,6 +57,26 @@ print("LOADING FILE:", os.path.abspath(__file__))
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
 ### FUNCTIONS
+
+# get edges for ell bins
+def get_ell_bin_edges(l_min, n_ell, binsize, logarithmic=False):
+
+    l_max = l_min + n_ell
+
+    if logarithmic:
+        num_bins = int(np.ceil(n_ell / binsize))
+        edges = np.unique(np.geomspace(l_min, l_max, num_bins + 1).astype(int))
+        edges[-1] = max(edges[-1], l_max)
+    else:
+        starts = np.arange(l_min, l_max, binsize)
+        edges = np.append(starts, l_max)
+
+    return edges
+
+# map ell index to its bin
+def ell_to_bin_index(ell, edges):
+    return int(np.searchsorted(edges, ell, side='right') - 1) if ell < edges[-1] else len(edges) - 1
+    
 def load_txt_fisher_matrices(file_pattern="Fisher Forecasts/Fisher Matrices/*_Binsize=*.txt"):
     
     files = sorted(glob.glob(file_pattern))
@@ -419,24 +440,6 @@ def plot_Fisher_from_matrices(
         if val is not None:
             fiducial_vals[p] = float(val)
 
-#    g.triangle_plot(
-#        plot_datasets,
-#        params=plot_params,
-#        filled=True,
-#        contour_colors=contour_colors[: len(plot_datasets)],
-#        #legend_loc='upper right',            # Sets anchor point
-#        legend_ncol=1,                         # Puts items vertically
-#        subplots_hide_invisible=True,
-#        # Pass bounding box into kwargs to push it below the plot
-#        #kwargs={'bbox_to_anchor': (0.35, 0.95)},
-#        legend_rect=[0.55, 0.65, 0.35, 0.25],
-#        markers=fiducial_vals if len(fiducial_vals) > 0 else None,
-#        title_limit=None,
-#    )
-
- #   if contour_colors:
- #       g.set_active_colors(contour_colors)
-
     if contour_colors:
         line_args = [{'color': c} for c in contour_colors]
     else:
@@ -475,7 +478,6 @@ def plot_Fisher_from_matrices(
 
     return g
     
-## Plotting etc.    
 # get derivatives for select parameters 
 def get_partial_derivative(fiducial_values, param1, param2):
     
@@ -1415,7 +1417,10 @@ def build_data_vector(forecast_map, spectra_dict, n_ell, binsize, logarithmic=Fa
     ells = np.arange(l_min, l_min + n_ell)
     observed_data_vector = []
 
-    for pair in forecast_map.pairs:  # ordered list of (a, b) tuples
+    edges = get_ell_bin_edges(l_min, n_ell, binsize, logarithmic)
+    bins = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+    for pair in forecast_map.pairs:
         if pair in spectra_dict:
             unbinned_cls = spectra_dict[pair]
         elif pair[::-1] in spectra_dict:
@@ -1425,12 +1430,17 @@ def build_data_vector(forecast_map, spectra_dict, n_ell, binsize, logarithmic=Fa
             unbinned_cls = np.zeros(n_ell)
 
         binned_cls_for_pair = []
-        for i in range(0, n_ell, binsize):
-            end_idx = min(i + binsize, n_ell)
-            bin_cls = unbinned_cls[i:end_idx]
-            bin_ells = ells[i:end_idx]
-            weights = 2 * bin_ells + 1
+        for start_ell, end_ell in bins:
+            idx_start = start_ell - l_min
+            idx_end = end_ell - l_min
 
+            bin_cls = unbinned_cls[idx_start:idx_end]
+            bin_ells = ells[idx_start:idx_end]
+
+            if len(bin_cls) == 0:
+                continue
+
+            weights = 2 * bin_ells + 1
             weighted_mean = np.sum(weights * bin_cls) / np.sum(weights)
             binned_cls_for_pair.append(weighted_mean)
 
@@ -1718,6 +1728,7 @@ def build_covariance_from_data(
     l_min=2,
     n_ell=3000, 
     binsize=1,  
+    logarithmic=False,
     shot_noise_lens=None,
     shape_noise_source=None,
     cmb_noise_kk=None,
@@ -1746,7 +1757,7 @@ def build_covariance_from_data(
     full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator, cmb_primaries = cmb_primaries)
 
     # build covariance -- now pass the binsize to CovarianceMatrix
-    full_cov = CovarianceMatrix(full_f_map, full_spectra_dict, f_sky_c, f_sky_g, f_sky_l, f_sky_c_g, f_sky_c_l, f_sky_g_l, f_sky_c_g_l, binsize=binsize)
+    full_cov = CovarianceMatrix(full_f_map, full_spectra_dict, f_sky_c, f_sky_g, f_sky_l, f_sky_c_g, f_sky_c_l, f_sky_g_l, f_sky_c_g_l, binsize=binsize, logarithmic=logarithmic)
 
     if desired_spectra is None:
         return full_cov, full_spectra_dict, full_f_map
@@ -1755,18 +1766,23 @@ def build_covariance_from_data(
         sliced_f_map = ForecastMap(n_lens=lens_data.shape[1]-1, n_src=source_data.shape[1]-1, l_min=l_min, n_ell=n_ell, desired_pairs=sliced_pairs, cmb_primaries=cmb_primaries)
         # Loop over full_spectra_dict to preserve its original, chronological block order
         sliced_spectra_dict = {pair: full_spectra_dict[pair] for pair in full_spectra_dict if pair in sliced_pairs}
-        sliced_cov = slice_matrix(full_cov, full_spectra_dict, full_f_map, binsize=binsize, desired_spectra=desired_spectra)
+        sliced_cov = slice_matrix(full_cov, full_spectra_dict, full_f_map, binsize=binsize, logarithmic=logarithmic, desired_spectra=desired_spectra)
         return sliced_cov, sliced_spectra_dict, sliced_f_map
 
 # slice vector and matrix given desired pairs
-##### Modify to make the return sliced matrix a real CovarianceMatrix object??
+# note that the returned object is not a real CovarianceMatrix object, but it contains the necessary information
+###### CHECK
 def slice_matrix(
     cov_obj, 
     spectra_dict, 
     f_map, 
     binsize=1, 
+    logarithmic=False,
     desired_spectra=None
 ):
+
+    n_ell = f_map.n_ell
+    l_min = f_map.l_min
     
     if desired_spectra is None:
         pairs_to_slice = f_map.pairs
@@ -1783,7 +1799,6 @@ def slice_matrix(
                 if not isinstance(p, tuple) or len(p) != 2:
                     raise ValueError(f"Each desired pair must be a tuple of two strings: {p}")
                 
-                # Canonical ordering (e.g., matching ('kappa_c', 'g') instead of ('g', 'kappa_c'))
                 if p[0] > p[1]:
                     canonical_pair = (p[1], p[0])
                 else:
@@ -1793,45 +1808,54 @@ def slice_matrix(
                     processed_desired_pairs.append(canonical_pair)
                     
             pairs_to_slice = processed_desired_pairs
-        
-    # Collect the global index ranges using f_map.get_indices
+
+    edges = get_ell_bin_edges(l_min, n_ell, binsize, logarithmic)
+    n_bins = len(edges) - 1
+
     all_ranges = []
     final_sliced_pairs = []
 
     for pair in f_map.pairs:
         if pair in pairs_to_slice:
             try:
-                # Let ForecastMap find the start and end indices for this block
                 start, end = f_map.get_indices(pair)
-                start = int(start / binsize)
-                end = int(end / binsize)
-                all_ranges.append(np.arange(start, end))
+
+                # start/end are positions in the *unbinned* flat vector, where
+                # each pair occupies a contiguous block of length n_ell:
+                # pair_idx * n_ell to (pair_idx + 1) * n_ell. Recover which
+                # block this is and the local (within-block) ell range.
+                pair_idx = start // n_ell
+                local_start = start - pair_idx * n_ell
+                local_end = end - pair_idx * n_ell
+
+                local_start_ell = l_min + local_start
+                local_end_ell = l_min + local_end
+
+                start_bin = ell_to_bin_index(local_start_ell, edges)
+                end_bin = ell_to_bin_index(local_end_ell, edges)
+
+                global_start = pair_idx * n_bins + start_bin
+                global_end = pair_idx * n_bins + end_bin
+
+                all_ranges.append(np.arange(global_start, global_end))
                 final_sliced_pairs.append(pair)
             except ValueError as e:
-                # Skip any blocks that don't exist in the current global configuration
                 print(f"Warning: {e} Skipping this block from the slice.")
                 continue
 
     if not all_ranges:
         raise ValueError("No matching spectra blocks were found to slice!")
 
-    # Concatenate all index segments into a single array
     keep_indices = np.concatenate(all_ranges)
-    
-    # Extract the underlying raw matrix from the input object if needed
-    # This handles both raw numpy arrays and object wrappers gracefully
+
     full_matrix = cov_obj.matrix if hasattr(cov_obj, 'matrix') else cov_obj
 
-    # Double-axis slicing to extract sub-blocks
     sliced_matrix_raw = full_matrix[keep_indices, :]
     sliced_matrix_raw = sliced_matrix_raw[:, keep_indices]
-    
-    # --- FIX: Wrap the matrix in a class container to preserve properties ---
-    ### FIX CAUSE THIS IS NOW AN IMPROPER OBJECT -- THE MATRIX IS CUT CORRECTLY BUT THE OTHER STUFF WILL BE WRONG
-    from copy import copy
+
     sliced_cov_obj = copy(cov_obj)
     sliced_cov_obj.matrix = sliced_matrix_raw
-    
+
     return sliced_cov_obj
 
 # get parameter dict from a given cosmology
@@ -2102,7 +2126,7 @@ class ForecastMap:
 # this is a class that is a massive covariance matrix
 class CovarianceMatrix:
     # initialize
-    def __init__(self, f_map, spectra_dict, f_sky_c, f_sky_g, f_sky_l, f_sky_c_g, f_sky_c_l, f_sky_g_l, f_sky_c_g_l, binsize=1):
+    def __init__(self, f_map, spectra_dict, f_sky_c, f_sky_g, f_sky_l, f_sky_c_g, f_sky_c_l, f_sky_g_l, f_sky_c_g_l, binsize=1, logarithmic=False):
         self.f_map = f_map # ForecastMap object
         self.spectra_dict = spectra_dict #dictionary mapping (tracer1, tracer2) to C_l^(tracer1, tracer2) array of length n_ell
         self.f_sky_c = f_sky_c 
@@ -2113,13 +2137,14 @@ class CovarianceMatrix:
         self.f_sky_g_l = f_sky_g_l
         self.f_sky_c_g_l = f_sky_c_g_l
         self.binsize = binsize
-
-        # N_ell from ForecastMap is the original, unbinned number of ell values
+        self.logarithmic = logarithmic
         self.l_min = f_map.l_min
+
         self.N_ell_unbinned = f_map.n_ell
         self.N_ell_binned = int(np.ceil(self.N_ell_unbinned / self.binsize))
-
-        # The total length of the flattened data vector after binning
+        self.edges = get_ell_bin_edges(self.l_min, self.N_ell_unbinned, self.binsize, self.logarithmic)
+        self.N_ell_binned = len(self.edges) - 1
+        # total length of the flattened data vector after binning is
         self.N = len(f_map.pairs) * self.N_ell_binned
 
         # master covariance matrix dimensions are based on binned ell values
@@ -2165,6 +2190,7 @@ class CovarianceMatrix:
             raise ValueError(f"Unhandled tracer field combination: {categories}")
             
     def _compute_block(self, pair_A, pair_B):
+
         # ells from 2 to N_ell_unbinned + 1, so the indices i directly correspond to ell_values[i-2]
         ells_unbinned = np.arange(self.l_min, self.N_ell_unbinned + self.l_min)
 
@@ -2181,23 +2207,23 @@ class CovarianceMatrix:
             else:
                 # If the cross-spectrum is not explicitly calculated, assume it's zero.
                 print("cross-spectrum for ", x, ", ", y, " is not given, and is assumed to be zero.")
-                return np.zeros(self.N_ell_unbinned) # Return an array of zeros of unbinned length
+                return np.zeros(self.N_ell_unbinned) 
 
         Cl_ac = get_Cl(a, c)
         Cl_bd = get_Cl(b, d)
         Cl_ad = get_Cl(a, d)
         Cl_bc = get_Cl(b, c)
 
-        # Initialize a block for binned values
+        # initialize
         binned_block = np.zeros((self.N_ell_binned, self.N_ell_binned))
 
         # Calculate covariance for each original ell, then bin
         for i_bin in range(self.N_ell_binned):
-            # Determine the range of unbinned ell indices for the current bin
-            # Note: ells_unbinned are indexed starting from 0, but correspond to ell=2,3,...
-            start_idx_unbinned = i_bin * self.binsize # Index in the 0-indexed unbinned Cl arrays
-            end_idx_unbinned = min((i_bin + 1) * self.binsize, self.N_ell_unbinned)
-
+            # Bin boundaries now come from self.edges (raw ell values), converted
+            # to 0-indexed positions in the unbinned Cl arrays.
+            start_idx_unbinned = self.edges[i_bin] - self.l_min
+            end_idx_unbinned = self.edges[i_bin + 1] - self.l_min
+            
             if start_idx_unbinned >= self.N_ell_unbinned:
                 break
 
@@ -2213,31 +2239,17 @@ class CovarianceMatrix:
             current_Cl_ad = Cl_ad[ell_indices_in_bin]
             current_Cl_bc = Cl_bc[ell_indices_in_bin]
 
-            # Calculate the unbinned covariance terms for the diagonal elements within this bin
-            # We average the (Cl_ac*Cl_bd + Cl_ad*Cl_bc) / (2ell+1) for all ell in the bin
+            # Calculate the unbinned Gasussian cov terms for the diagonal elements within this bin
             # fsky depends on which covariance is being calculated
             weights = 2 * current_ells_for_bin + 1
             f_sky = self.get_f_sky(pair_A, pair_B)
-            #denom_factors = (2 * current_ells_for_bin + 1) * f_sky
-
-            # Avoid division by zero
-            #denom_factors[denom_factors == 0] = np.inf
             unbinned_var_ell = (current_Cl_ac * current_Cl_bd + current_Cl_ad * current_Cl_bc) / (weights * f_sky)
-            
-            # calculate each covariance value
-            #cov_terms_unbinned_diag = (current_Cl_ac * current_Cl_bd + current_Cl_ad * current_Cl_bc) / denom_factors
-
-            # average covariance values in the bin
-            #binned_block[i_bin, i_bin] = np.sum(cov_terms_unbinned_diag) / (self.binsize ** 2)
             binned_block[i_bin, i_bin] = np.sum((weights ** 2) * unbinned_var_ell) / (np.sum(weights) ** 2)
 
         return binned_block
 
     def _build_master_covariance(self):
         for pair_A in self.f_map.pairs:
-            # The indices from f_map are still for the unbinned ells.
-            # We need to adapt this or handle it in get_indices for CovarianceMatrix.
-            # For CovarianceMatrix, the indices sA, eA should be based on N_ell_binned
 
             # Recalculate block start/end indices based on binned N_ell for the master matrix
             idx_A = self.f_map.pair_to_index[pair_A]
@@ -2265,9 +2277,8 @@ class CovarianceMatrix:
 
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 
-## LIKELIHOODS 
-###### FIX TO INCLUDE ALL THE FSKYS
 # SO DESI Likelihood (w/ or w/o emulator, w or w/o primaries) 
+###### FIX TO ACCOUNT FOR LOGARITHMIC BINNING
 class SO_x_DESI_Likelihood(Likelihood):
 
     params = {
@@ -2574,10 +2585,11 @@ class SO_x_DESI_Likelihood(Likelihood):
         
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
 ##### CHECK TO MAKE SURE EQUATIONS AND LOGA_s ARE CORRECT
+##### FIX TO ACCOUNT FOR LOGARITHMIC BINNING
 # Fisher Forecast class
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky_c=0.4, f_sky_g=None, f_sky_l=None, f_sky_c_g=None, f_sky_c_l=None, f_sky_g_l=None, 
-                 f_sky_c_g_l=None, l_min = 2, n_ell=5000, binsize=50, 
+                 f_sky_c_g_l=None, l_min = 2, n_ell=5000, binsize=100, logarithmic=False, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024, 
@@ -2590,12 +2602,13 @@ class FisherForecaster:
         self.z_max = z_max
         self.n_chi = n_chi
         self.binsize = binsize
+        self.logarithmic = logarithmic
         self.additional_Fisher_matrix=additional_Fisher_matrix
         self.additional_Fisher_params=additional_Fisher_params
         
         self.survey_params = {
             'f_sky_c': f_sky_c, 'f_sky_g': f_sky_g, 'f_sky_l': f_sky_l, 'f_sky_c_g': f_sky_c_g, 'f_sky_c_l': f_sky_c_l, 'f_sky_g_l': f_sky_g_l, 
-            'f_sky_c_g_l': f_sky_c_g_l, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize,
+            'f_sky_c_g_l': f_sky_c_g_l, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize, 'logarithmic': logarithmic,
             'shot_noise_lens': shot_noise_lens, 'shape_noise_source': shape_noise_source,
             'cmb_noise_kk': cmb_noise_kk, 'cmb_noise_TT': cmb_noise_TT, 'cmb_noise_EE': cmb_noise_EE,
             'magnification_bias_lenses': magnification_bias_lenses, 'desired_spectra': desired_spectra, 
@@ -2622,7 +2635,8 @@ class FisherForecaster:
         # build full f_map, etc. so that I don't have to remake them every time I call build_theory_vector
         p = self.survey_params
         self.ells = np.arange(p['l_min'], p['l_min'] + p['n_ell']) 
-        self.num_binned_ells = int(np.ceil(p['n_ell'] / p['binsize']))
+        self.ell_bin_edges = get_ell_bin_edges(p['l_min'], p['n_ell'], p['binsize'], p['logarithmic'])
+        self.num_binned_ells = len(self.ell_bin_edges) - 1
         self.full_f_map = ForecastMap(n_lens=self.lens_data.shape[1]-1, n_src=self.source_data.shape[1]-1, l_min=p['l_min'], n_ell=p['n_ell'], cmb_primaries = self.cmb_primaries)
 
         # default to full spectra
@@ -2693,28 +2707,27 @@ class FisherForecaster:
             final_spectra_dict = full_spectra_dict
 
         self.spectra_dict = final_spectra_dict
-
+            
         model_data_vector = []
+        edges = self.ell_bin_edges
         for pair in self.final_f_map.pairs:
             unbinned_cls = final_spectra_dict[pair]
-            for i in range(0, p['n_ell'], p['binsize']):
-                end_idx = min(i + p['binsize'], len(unbinned_cls))
-                if i < end_idx:
-                    ### TESTING WITH WEIGHTS
-                    bin_cls = unbinned_cls[i:end_idx]
-                    bin_ells = self.ells[i:end_idx]
+            for i_bin in range(len(edges) - 1):
+                start_idx = edges[i_bin] - p['l_min']
+                end_idx = min(edges[i_bin + 1] - p['l_min'], len(unbinned_cls))
+                if start_idx < end_idx:
+                    bin_cls = unbinned_cls[start_idx:end_idx]
+                    bin_ells = self.ells[start_idx:end_idx]
                     weights = 2 * bin_ells + 1
-                    
+
                     # Mode-weighted average: sum((2l+1) * C_l) / sum(2l+1)
                     weighted_mean = np.sum(weights * bin_cls) / np.sum(weights)
                     model_data_vector.append(weighted_mean)
-                    
-                    # model_data_vector.append(np.mean(unbinned_cls[i:end_idx]))
                 else:
                     model_data_vector.append(0.0)
         
         return np.array(model_data_vector)
-
+        
     # manually compute derivatives
     # 5-point stencil
     def get_derivatives(self, desired_params):
@@ -2799,6 +2812,7 @@ class FisherForecaster:
         return C_derivatives, mu_derivatives
     
     # plot derivatives of spectra wrt different parameters
+    ##### CHECK
     def plot_derivatives(self, desired_params=None, normalized=False):
         
         if not hasattr(self, 'mu_derivatives') or self.mu_derivatives is None:
@@ -2809,12 +2823,17 @@ class FisherForecaster:
         # Survey parameters and points per pair
         p = self.survey_params
         n_points_per_pair = self.num_binned_ells
-        
-        # x-axis values (bin centers)
-        x_data = np.array([
-            np.mean(self.ells[i : i + p['binsize']]) 
-            for i in range(0, p['n_ell'], p['binsize'])
-        ])
+        edges = self.ell_bin_edges
+
+        # x-axis values (mode-weighted bin centers, consistent with build_theory_vector)
+        x_data = []
+        for i_bin in range(len(edges) - 1):
+            start_idx = edges[i_bin] - p['l_min']
+            end_idx = edges[i_bin + 1] - p['l_min']
+            bin_ells = self.ells[start_idx:end_idx]
+            weights = 2 * bin_ells + 1
+            x_data.append(np.sum(weights * bin_ells) / np.sum(weights))
+        x_data = np.array(x_data)
 
         # Extract ordered spectrum pairs
         ordered_pairs = self.final_f_map.pairs 
@@ -2830,13 +2849,18 @@ class FisherForecaster:
             start_idx = idx * n_points_per_pair
             end_idx = start_idx + n_points_per_pair
             
-            # Compute binned C_ell for this specific pair (length 50)
+            # Compute binned C_ell for this specific pair, mode-weighted and edge-consistent
             if normalized:
                 unbinned_cl = np.array(spectra_dict[pair])
-                c_ell_segment = np.array([
-                    np.mean(unbinned_cl[i : i + p['binsize']]) 
-                    for i in range(0, p['n_ell'], p['binsize'])
-                ])
+                c_ell_segment = []
+                for i_bin in range(len(edges) - 1):
+                    b_start = edges[i_bin] - p['l_min']
+                    b_end = edges[i_bin + 1] - p['l_min']
+                    bin_cls = unbinned_cl[b_start:b_end]
+                    bin_ells = self.ells[b_start:b_end]
+                    weights = 2 * bin_ells + 1
+                    c_ell_segment.append(np.sum(weights * bin_cls) / np.sum(weights))
+                c_ell_segment = np.array(c_ell_segment)
 
             for param in desired_params:
                 if param not in self.mu_derivatives:
@@ -2845,7 +2869,7 @@ class FisherForecaster:
                 param_deriv_segment = self.mu_derivatives[param][start_idx:end_idx]
 
                 if normalized:
-                    # Both arrays are length 50 now
+                    # Both arrays are length num_binned_ells now
                     y_data = np.where(c_ell_segment != 0, param_deriv_segment / c_ell_segment, 0.0)
                     y_label = rf"$\frac{{1}}{{C_\ell^{{\text{{{pair}}}}}}} \frac{{\partial C_\ell^{{\text{{{pair}}}}}}}{{\partial {param}}}$"
                 else:
@@ -2894,25 +2918,33 @@ class FisherForecaster:
         n_params = len(desired_params)
         F = np.zeros((n_params, n_params))
         inv_C = np.linalg.inv(C)
-
-        ##### CHECK
+        F_mu_only = np.zeros((n_params, n_params))
+        F_cov_only = np.zeros((n_params, n_params))
+        
         for i, p_i in enumerate(desired_params):
             for j, p_j in enumerate(desired_params):
                 dC_di = C_derivatives[p_i]
                 dC_dj = C_derivatives[p_j]
-                
                 dmu_di = mu_derivatives[p_i][:, np.newaxis]
                 dmu_dj = mu_derivatives[p_j][:, np.newaxis]
-
+        
                 matrix1 = inv_C @ dC_di @ inv_C @ dC_dj
                 matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
+        
+                F_cov_only[i, j] = 0.5 * np.trace(matrix1)
+                F_mu_only[i, j]  = 0.5 * np.trace(matrix2)
                 F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
 
-        # add additional Fisher matrix, if provided
-        if self.additional_Fisher_matrix is not None:
-            self.F = F + self.additional_Fisher_matrix
-        else:
-            self.F = F
+        self.F_cov_only = F_cov_only
+        self.F_mu_only = F_mu_only
+        self.F = F_cov_only
+        
+# TEMP -- JUST COV PART
+#        # add additional Fisher matrix, if provided
+#        if self.additional_Fisher_matrix is not None:
+#            self.F = F + self.additional_Fisher_matrix
+#        else:
+#            self.F = F
 
         # calculate covariance matrix
         self.cov = np.linalg.inv(self.F)   
@@ -2925,7 +2957,7 @@ class FisherForecaster:
                 error_str = f"{sigma:.3e}" if sigma < 0.001 else f"{sigma:.4f}"
                 print(f"The uncertainty on {p_name} is {error_str}")
             print("")
-        
+
         return self.F, self.cov
 
     def sample_fisher_with_uniform_priors(self, uniform_priors=None, num_samples=200000):
