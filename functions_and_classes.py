@@ -2811,6 +2811,212 @@ class FisherForecaster:
     
         return C_derivatives, mu_derivatives
     
+    # pull cosmology-building out so both get_derivatives and this can use it
+    def _make_cosmo(self, p_dict):
+        cosmo = ccl.Cosmology(
+            Omega_c = p_dict['Omega_c'],
+            Omega_b = p_dict['Omega_b'],
+            Omega_k = p_dict['Omega_k'],
+            h       = p_dict['h'],
+            A_s     = p_dict['A_s'],
+            n_s     = p_dict['n_s'],
+            w0      = p_dict['w0'],
+            wa      = p_dict['wa'],
+            Neff    = p_dict['Neff'],
+            m_nu    = p_dict['m_nu'],
+            T_CMB   = p_dict['T_CMB'],
+            transfer_function = 'boltzmann_camb',
+            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
+        )
+        cosmo.compute_growth()
+        return cosmo
+
+    #### CHECK
+    def _chi2(self, theta_dict, mu_fiducial, inv_C):
+        cosmo = self._make_cosmo(theta_dict)
+        mu = self.build_theory_vector(cosmo)
+        d = mu - mu_fiducial
+        return d @ inv_C @ d
+
+    #### CHECK
+    def check_hessian_stability(self, param, C=None, mu_fiducial=None,
+                                 n_steps=15, h_min_frac=1e-5, h_max_frac=1e-1):
+        """
+        Compare the analytic-style Fisher diagonal element F_pp (from the
+        5-point stencil on mu, via inv_C) against a direct numerical second
+        derivative of chi2(theta) at a range of step sizes. If chi2's
+        curvature is stable across binsize/step choices while the
+        mu-derivative-based F is not, the stencil (or the theory-vector
+        precision feeding it) is the problem, not the Fisher formula or C.
+        """
+        p = self.survey_params
+
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(
+                self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        inv_C = np.linalg.inv(C)
+
+        if mu_fiducial is None:
+            mu_fiducial = self.build_theory_vector(self.cosmology)
+
+        fid_val = self.fiducial_dict[param]
+        h_values = np.logspace(np.log10(h_min_frac), np.log10(h_max_frac), n_steps) * abs(fid_val)
+
+        d2_list = []
+        chi2_center = self._chi2(self.fiducial_dict, mu_fiducial, inv_C)  # should be ~0
+
+        for h in h_values:
+            theta_p = self.fiducial_dict.copy()
+            theta_m = self.fiducial_dict.copy()
+            theta_p[param] += h
+            theta_m[param] -= h
+
+            chi2_p = self._chi2(theta_p, mu_fiducial, inv_C)
+            chi2_m = self._chi2(theta_m, mu_fiducial, inv_C)
+
+            d2_dtheta2 = (chi2_p - 2.0 * chi2_center + chi2_m) / h**2
+            d2_list.append(d2_dtheta2)
+
+        d2_list = np.array(d2_list)
+        F_from_chi2 = 0.5 * d2_list   # chi2 = 2*(0.5 * d2chi2/dtheta2) relation: F_pp = 0.5 * d2(chi2)/dtheta^2
+
+        # plot: log-log deviation from median, to find the flat plateau
+        median_val = np.median(F_from_chi2)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+
+        axes[0].plot(h_values, F_from_chi2, marker='o')
+        axes[0].axhline(median_val, color='gray', ls='--', lw=1, label='median')
+        axes[0].set_xscale('log')
+        axes[0].set_xlabel(f"step size h ({param})")
+        axes[0].set_ylabel(r"$F_{pp}$ from $\chi^2$ curvature")
+        axes[0].set_title(f"F_{{{param},{param}}} vs step size (direct chi2 Hessian)")
+        axes[0].legend()
+
+        axes[1].loglog(h_values, np.abs(F_from_chi2 - median_val) / abs(median_val))
+        axes[1].set_xlabel(f"step size h ({param})")
+        axes[1].set_ylabel("relative deviation from median")
+        axes[1].set_title("Stability plateau (look for the flat region)")
+
+        plt.tight_layout()
+        plt.show()
+
+        return h_values, F_from_chi2
+
+    #### CHECK
+    def find_optimal_steps(self, params=None, C=None, mu_fiducial=None,
+                            n_steps=15, h_min_frac=1e-6, h_max_frac=1e-1,
+                            window_frac=0.3, plot=True, verbose=True):
+        """
+        For each parameter, scan step size h, compute F_pp = 0.5 * d2(chi2)/dtheta^2
+        via direct finite differences on chi2 (not the mu-derivative stencil), then
+        find the flattest contiguous window of h values (the 'plateau') and report
+        the recommended step size as the one closest to the plateau's center.
+
+        Returns a dict: {param: {'h_values', 'F_pp', 'plateau_mask', 'recommended_h',
+                                  'plateau_value', 'plateau_rel_std'}}
+        """
+        if params is None:
+            params = ['Omega_c', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b',
+                       'Omega_k', 'Neff', 'm_nu', 'T_CMB']
+
+        p = self.survey_params
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(
+                self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        inv_C = np.linalg.inv(C)
+
+        if mu_fiducial is None:
+            mu_fiducial = self.build_theory_vector(self.cosmology, silent=True)
+
+        chi2_center = self._chi2(self.fiducial_dict, mu_fiducial, inv_C)
+
+        results = {}
+        window_size = max(3, int(round(n_steps * window_frac)))
+
+        for param in params:
+            fid_val = self.fiducial_dict.get(param, None)
+            if fid_val is None or fid_val == 0:
+                if verbose:
+                    print(f"[{param}] skipped: fiducial value is zero or missing "
+                          f"(need an absolute step size override for this parameter).")
+                continue
+
+            h_values = np.logspace(np.log10(h_min_frac), np.log10(h_max_frac), n_steps) * abs(fid_val)
+            F_pp = np.empty(n_steps)
+
+            for k, h in enumerate(h_values):
+                theta_p = self.fiducial_dict.copy()
+                theta_m = self.fiducial_dict.copy()
+                theta_p[param] += h
+                theta_m[param] -= h
+
+                chi2_p = self._chi2(theta_p, mu_fiducial, inv_C)
+                chi2_m = self._chi2(theta_m, mu_fiducial, inv_C)
+
+                F_pp[k] = 0.5 * (chi2_p - 2.0 * chi2_center + chi2_m) / h**2
+
+            # slide a window across F_pp, find the window with lowest relative std
+            best_start, best_rel_std = 0, np.inf
+            for start in range(0, n_steps - window_size + 1):
+                window = F_pp[start:start + window_size]
+                w_mean = np.mean(window)
+                if w_mean == 0:
+                    continue
+                rel_std = np.std(window) / abs(w_mean)
+                if rel_std < best_rel_std:
+                    best_rel_std = rel_std
+                    best_start = start
+
+            plateau_mask = np.zeros(n_steps, dtype=bool)
+            plateau_mask[best_start:best_start + window_size] = True
+            plateau_value = np.mean(F_pp[plateau_mask])
+            # recommended step: the h at the center of the plateau window
+            center_idx = best_start + window_size // 2
+            recommended_h = h_values[center_idx]
+
+            results[param] = {
+                'h_values': h_values,
+                'F_pp': F_pp,
+                'plateau_mask': plateau_mask,
+                'recommended_h': recommended_h,
+                'plateau_value': plateau_value,
+                'plateau_rel_std': best_rel_std,
+            }
+
+            if verbose:
+                flag = "  <-- WARNING: plateau not flat (>2% scatter)" if best_rel_std > 0.02 else ""
+                print(f"[{param}] recommended h = {recommended_h:.3e}  "
+                      f"(F_pp plateau = {plateau_value:.4e}, rel. scatter = {best_rel_std:.2%}){flag}")
+
+        if plot:
+            n_params = len(results)
+            ncols = 3
+            nrows = int(np.ceil(n_params / ncols))
+            fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 3.5 * nrows), squeeze=False)
+
+            for idx, (param, r) in enumerate(results.items()):
+                ax = axes[idx // ncols][idx % ncols]
+                ax.plot(r['h_values'], r['F_pp'], marker='o', ms=4, lw=1, color='steelblue')
+                ax.plot(r['h_values'][r['plateau_mask']], r['F_pp'][r['plateau_mask']],
+                         marker='o', ms=6, lw=2, color='firebrick', label='plateau')
+                ax.axvline(r['recommended_h'], color='firebrick', ls='--', lw=1)
+                ax.set_xscale('log')
+                ax.set_title(f"{param}  (h*={r['recommended_h']:.2e})", fontsize=10)
+                ax.tick_params(labelsize=8)
+                if idx == 0:
+                    ax.legend(fontsize=8)
+
+            # hide unused subplots
+            for idx in range(n_params, nrows * ncols):
+                axes[idx // ncols][idx % ncols].axis('off')
+
+            plt.tight_layout()
+            plt.show()
+
+        return results
+        
     # plot derivatives of spectra wrt different parameters
     ##### CHECK
     def plot_derivatives(self, desired_params=None, normalized=False):
@@ -2937,14 +3143,7 @@ class FisherForecaster:
 
         self.F_cov_only = F_cov_only
         self.F_mu_only = F_mu_only
-        self.F = F_cov_only
-        
-# TEMP -- JUST COV PART
-#        # add additional Fisher matrix, if provided
-#        if self.additional_Fisher_matrix is not None:
-#            self.F = F + self.additional_Fisher_matrix
-#        else:
-#            self.F = F
+        self.F = F
 
         # calculate covariance matrix
         self.cov = np.linalg.inv(self.F)   
