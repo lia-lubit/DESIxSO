@@ -2593,7 +2593,7 @@ class FisherForecaster:
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, magnification_bias_lenses=None, desired_spectra=None, 
                  linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=4096, 
-                 additional_Fisher_matrix=None, additional_Fisher_params=None):
+                 additional_Fisher_matrix=None, additional_Fisher_params=None, baryon_feedback_model = None, log10_T_AGN = None):
 
         self.cosmology = cosmology
         self.lens_data = lens_data
@@ -2605,7 +2605,11 @@ class FisherForecaster:
         self.logarithmic = logarithmic
         self.additional_Fisher_matrix=additional_Fisher_matrix
         self.additional_Fisher_params=additional_Fisher_params
-        
+        self.baryon_feedback_model = baryon_feedback_model
+
+        if self.baryon_feedback_model == 'hmcode':
+            self.log10_T_AGN = log10_T_AGN
+    
         self.survey_params = {
             'f_sky_c': f_sky_c, 'f_sky_g': f_sky_g, 'f_sky_l': f_sky_l, 'f_sky_c_g': f_sky_c_g, 'f_sky_c_l': f_sky_c_l, 'f_sky_g_l': f_sky_g_l, 
             'f_sky_c_g_l': f_sky_c_g_l, 'l_min': l_min, 'n_ell': n_ell, 'binsize': binsize, 'logarithmic': logarithmic,
@@ -2756,30 +2760,10 @@ class FisherForecaster:
             params_down1[param] -= step
             params_down2[param] -= 2.0 * step
 
-            # Helper function to initialize CCL cosmology and compute growth
-            def make_cosmo(p_dict):
-                cosmo = ccl.Cosmology(
-                    Omega_c = p_dict['Omega_c'],
-                    Omega_b = p_dict['Omega_b'],
-                    Omega_k = p_dict['Omega_k'],
-                    h       = p_dict['h'],
-                    A_s     = p_dict['A_s'],
-                    n_s     = p_dict['n_s'],
-                    w0      = p_dict['w0'],
-                    wa      = p_dict['wa'],
-                    Neff    = p_dict['Neff'],
-                    m_nu    = p_dict['m_nu'],
-                    T_CMB   = p_dict['T_CMB'],
-                    transfer_function = 'boltzmann_camb',
-                    extra_parameters={"camb": {"dark_energy_model": "ppf", "AccuracyBoost": 3}}
-                )
-                cosmo.compute_growth()
-                return cosmo
-
-            cosmo_up1   = make_cosmo(params_up1)
-            cosmo_up2   = make_cosmo(params_up2)
-            cosmo_down1 = make_cosmo(params_down1)
-            cosmo_down2 = make_cosmo(params_down2)
+            cosmo_up1   = self._make_cosmo(params_up1)
+            cosmo_up2   = self._make_cosmo(params_up2)
+            cosmo_down1 = self._make_cosmo(params_down1)
+            cosmo_down2 = self._make_cosmo(params_down2)
 
             # Theory vector derivatives (mu)
             mu_up1   = self.build_theory_vector(cosmo_up1)
@@ -2813,6 +2797,15 @@ class FisherForecaster:
     
     # pull cosmology-building out so both get_derivatives and this can use it
     def _make_cosmo(self, p_dict):
+
+        camb_extra = {"dark_energy_model": "ppf", "AccuracyBoost": 3}
+        mps = 'halofit'
+
+        if self.baryon_feedback_model == 'hmcode':
+            mps = 'camb'
+            camb_extra['halofit_version'] = 'mead2020_feedback'
+            camb_extra['HMCode_logT_AGN'] = p_dict.get('log10_T_AGN', self.log10_T_AGN)
+
         cosmo = ccl.Cosmology(
             Omega_c = p_dict['Omega_c'],
             Omega_b = p_dict['Omega_b'],
@@ -2826,7 +2819,8 @@ class FisherForecaster:
             m_nu    = p_dict['m_nu'],
             T_CMB   = p_dict['T_CMB'],
             transfer_function = 'boltzmann_camb',
-            extra_parameters={"camb": {"dark_energy_model": "ppf", "AccuracyBoost": 3}}
+            matter_power_spectrum = mps,
+            extra_parameters={"camb": camb_extra}
         )
         cosmo.compute_growth()
         return cosmo
@@ -2904,129 +2898,64 @@ class FisherForecaster:
         return h_values, F_from_chi2
 
     #### CHECK
-    def find_optimal_steps(self, params=None, C=None, mu_fiducial=None,
-                            n_steps=15, h_min_frac=1e-6, h_max_frac=1e-1,
-                            window_frac=0.3, plot=True, verbose=True):
+    def compute_baryon_feedback_bias(self, T_AGN_true, T_AGN_assumed=None, C=None, desired_params=None):
         """
-        For each parameter, scan step size h, compute F_pp = 0.5 * d2(chi2)/dtheta^2
-        via direct finite differences on chi2 (not the mu-derivative stencil), then
-        find the flattest contiguous window of h values (the 'plateau') and report
-        the recommended step size as the one closest to the plateau's center.
-
-        Returns a dict: {param: {'h_values', 'F_pp', 'plateau_mask', 'recommended_h',
-                                  'plateau_value', 'plateau_rel_std'}}
+        Linear Fisher-bias estimate of the shift induced on desired_params if the
+        true sky has HMCode log10(T_AGN) = T_AGN_true but the analysis (F, C,
+        mu_derivatives) was built assuming T_AGN_assumed (defaults to self.log10_T_AGN).
+        Requires self.baryon_feedback_model == 'hmcode' and make_fisher_matrix()
+        to have already been run (uses self.F, self.cov, self.mu_derivatives).
         """
-        if params is None:
-            params = ['Omega_c', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b',
-                       'Omega_k', 'Neff', 'm_nu', 'T_CMB']
-
+        if self.baryon_feedback_model != 'hmcode':
+            raise ValueError("compute_baryon_feedback_bias currently assumes baryon_feedback_model='hmcode'.")
+        if self.F is None or self.cov is None or not hasattr(self, 'mu_derivatives'):
+            raise ValueError("Run make_fisher_matrix() first so F, cov, and mu_derivatives are populated.")
+    
+        desired_params = desired_params if desired_params is not None else self.desired_params
+        T_AGN_assumed = T_AGN_assumed if T_AGN_assumed is not None else self.log10_T_AGN
+    
         p = self.survey_params
         if C is None:
-            cov_obj, _, _ = build_covariance_from_data(
-                self.cosmology, self.lens_data, self.source_data, **p)
+            cov_obj, _, _ = build_covariance_from_data(self.cosmology, self.lens_data, self.source_data, **p)
             C = cov_obj.matrix
         inv_C = np.linalg.inv(C)
+    
+        # theory vector at the *assumed* feedback level (should match what F/mu_derivatives used)
+        old_T_AGN = self.log10_T_AGN
+        self.log10_T_AGN = T_AGN_assumed
+        mu_assumed = self.build_theory_vector(self._make_cosmo(self.fiducial_dict), silent=True)
+    
+        # theory vector at the *true* feedback level
+        self.log10_T_AGN = T_AGN_true
+        mu_true = self.build_theory_vector(self._make_cosmo(self.fiducial_dict), silent=True)
+    
+        self.log10_T_AGN = old_T_AGN  # restore state
+    
+        delta_mu = mu_true - mu_assumed
+    
+        B = np.array([self.mu_derivatives[param] @ inv_C @ delta_mu for param in desired_params])
+        delta_theta = self.cov @ B   # self.cov == F^{-1} from make_fisher_matrix
+    
+        bias_dict = dict(zip(desired_params, delta_theta))
+        param_index = {p: i for i, p in enumerate(self.desired_params)}
+        sigma_dict = {param: np.sqrt(self.cov[param_index[param], param_index[param]]) for param in desired_params}
 
-        if mu_fiducial is None:
-            mu_fiducial = self.build_theory_vector(self.cosmology, silent=True)
-
-        chi2_center = self._chi2(self.fiducial_dict, mu_fiducial, inv_C)
-
-        results = {}
-        window_size = max(3, int(round(n_steps * window_frac)))
-
-        for param in params:
-            fid_val = self.fiducial_dict.get(param, None)
-            if fid_val is None or fid_val == 0:
-                if verbose:
-                    print(f"[{param}] skipped: fiducial value is zero or missing "
-                          f"(need an absolute step size override for this parameter).")
-                continue
-
-            h_values = np.logspace(np.log10(h_min_frac), np.log10(h_max_frac), n_steps) * abs(fid_val)
-            F_pp = np.empty(n_steps)
-
-            for k, h in enumerate(h_values):
-                theta_p = self.fiducial_dict.copy()
-                theta_m = self.fiducial_dict.copy()
-                theta_p[param] += h
-                theta_m[param] -= h
-
-                chi2_p = self._chi2(theta_p, mu_fiducial, inv_C)
-                chi2_m = self._chi2(theta_m, mu_fiducial, inv_C)
-
-                F_pp[k] = 0.5 * (chi2_p - 2.0 * chi2_center + chi2_m) / h**2
-
-            # slide a window across F_pp, find the window with lowest relative std
-            best_start, best_rel_std = 0, np.inf
-            for start in range(0, n_steps - window_size + 1):
-                window = F_pp[start:start + window_size]
-                w_mean = np.mean(window)
-                if w_mean == 0:
-                    continue
-                rel_std = np.std(window) / abs(w_mean)
-                if rel_std < best_rel_std:
-                    best_rel_std = rel_std
-                    best_start = start
-
-            plateau_mask = np.zeros(n_steps, dtype=bool)
-            plateau_mask[best_start:best_start + window_size] = True
-            plateau_value = np.mean(F_pp[plateau_mask])
-            # recommended step: the h at the center of the plateau window
-            center_idx = best_start + window_size // 2
-            recommended_h = h_values[center_idx]
-
-            results[param] = {
-                'h_values': h_values,
-                'F_pp': F_pp,
-                'plateau_mask': plateau_mask,
-                'recommended_h': recommended_h,
-                'plateau_value': plateau_value,
-                'plateau_rel_std': best_rel_std,
-            }
-
-            if verbose:
-                flag = "  <-- WARNING: plateau not flat (>2% scatter)" if best_rel_std > 0.02 else ""
-                print(f"[{param}] recommended h = {recommended_h:.3e}  "
-                      f"(F_pp plateau = {plateau_value:.4e}, rel. scatter = {best_rel_std:.2%}){flag}")
-
-        if plot:
-            n_params = len(results)
-            ncols = 3
-            nrows = int(np.ceil(n_params / ncols))
-            fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 3.5 * nrows), squeeze=False)
-
-            for idx, (param, r) in enumerate(results.items()):
-                ax = axes[idx // ncols][idx % ncols]
-                ax.plot(r['h_values'], r['F_pp'], marker='o', ms=4, lw=1, color='steelblue')
-                ax.plot(r['h_values'][r['plateau_mask']], r['F_pp'][r['plateau_mask']],
-                         marker='o', ms=6, lw=2, color='firebrick', label='plateau')
-                ax.axvline(r['recommended_h'], color='firebrick', ls='--', lw=1)
-                ax.set_xscale('log')
-                ax.set_title(f"{param}  (h*={r['recommended_h']:.2e})", fontsize=10)
-                ax.tick_params(labelsize=8)
-                if idx == 0:
-                    ax.legend(fontsize=8)
-
-            # hide unused subplots
-            for idx in range(n_params, nrows * ncols):
-                axes[idx // ncols][idx % ncols].axis('off')
-
-            plt.tight_layout()
-            plt.show()
-
-        return results
-        
+        print("Bias from assuming log10(T_AGN) = {:.3f} when truth is {:.3f}:".format(T_AGN_assumed, T_AGN_true))
+        for param in desired_params:
+            ratio = bias_dict[param] / sigma_dict[param]
+            flag = "  <-- >0.3σ shift" if abs(ratio) > 0.3 else ""
+            print(f"  Δ{param} = {bias_dict[param]:.4e}  ({ratio:+.2f}σ){flag}")
+    
+        return bias_dict
+    
     #### CHECK
+    # find optimal step sizes for each paramter, using our 5 point stencil approximation of the derivative
+    # we want a step size that is in a stable plateau, so small variations are not drastically changing constraints 
+    # -- if they are, this suggests were in an unstable regime and are not getting true derivatives, but noise artifacts, etc.
     def find_optimal_steps_5point(self, params=None, C=None, mu_fiducial=None,
-                                   n_steps=30, h_min_frac=1e-4, h_max_frac=1e-2,
+                                   n_steps=30, h_min_frac=1e-6, h_max_frac=1e-1,
                                    window_frac=0.3, plot=True, verbose=True):
-        """
-        Like find_optimal_steps, but evaluates F_pp using the actual 5-point
-        stencil (needs h AND 2h), matching get_derivatives exactly, rather
-        than a 2-point central difference. This avoids picking an h whose
-        2h companion point falls into the truncation-biased region.
-        """
+
         if params is None:
             params = ['Omega_c', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b',
                        'Omega_k']
