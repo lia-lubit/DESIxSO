@@ -2592,7 +2592,7 @@ class FisherForecaster:
                  f_sky_c_g_l=None, l_min = 2, n_ell=5000, binsize=100, logarithmic=False, 
                  shot_noise_lens=None, shape_noise_source=None, cmb_noise_kk=None, cmb_noise_TT=None, 
                  cmb_noise_EE=None, magnification_bias_lenses=None, desired_spectra=None, 
-                 linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=1024, 
+                 linear_emulator=None, boost_emulator=None, step_dict=None, cmb_primaries=False, z_max=6, n_chi=4096, 
                  additional_Fisher_matrix=None, additional_Fisher_params=None):
 
         self.cosmology = cosmology
@@ -2771,7 +2771,7 @@ class FisherForecaster:
                     m_nu    = p_dict['m_nu'],
                     T_CMB   = p_dict['T_CMB'],
                     transfer_function = 'boltzmann_camb',
-                    extra_parameters={"camb": {"dark_energy_model": "ppf"}}
+                    extra_parameters={"camb": {"dark_energy_model": "ppf", "AccuracyBoost": 3}}
                 )
                 cosmo.compute_growth()
                 return cosmo
@@ -2826,7 +2826,7 @@ class FisherForecaster:
             m_nu    = p_dict['m_nu'],
             T_CMB   = p_dict['T_CMB'],
             transfer_function = 'boltzmann_camb',
-            extra_parameters={"camb": {"dark_energy_model": "ppf"}}
+            extra_parameters={"camb": {"dark_energy_model": "ppf", "AccuracyBoost": 3}}
         )
         cosmo.compute_growth()
         return cosmo
@@ -3016,6 +3016,213 @@ class FisherForecaster:
             plt.show()
 
         return results
+        
+    #### CHECK
+    def find_optimal_steps_5point(self, params=None, C=None, mu_fiducial=None,
+                                   n_steps=30, h_min_frac=1e-4, h_max_frac=1e-2,
+                                   window_frac=0.3, plot=True, verbose=True):
+        """
+        Like find_optimal_steps, but evaluates F_pp using the actual 5-point
+        stencil (needs h AND 2h), matching get_derivatives exactly, rather
+        than a 2-point central difference. This avoids picking an h whose
+        2h companion point falls into the truncation-biased region.
+        """
+        if params is None:
+            params = ['Omega_c', 'A_s', 'h', 'w0', 'wa', 'n_s', 'Omega_b',
+                       'Omega_k']
+
+        p = self.survey_params
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(
+                self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        inv_C = np.linalg.inv(C)
+
+        if mu_fiducial is None:
+            mu_fiducial = self.build_theory_vector(self.cosmology, silent=True)
+
+        chi2_center = self._chi2(self.fiducial_dict, mu_fiducial, inv_C)
+
+        results = {}
+        window_size = max(3, int(round(n_steps * window_frac)))
+
+        for param in params:
+            fid_val = self.fiducial_dict.get(param, None)
+            if not fid_val:
+                if verbose:
+                    print(f"[{param}] skipped: zero/missing fiducial value.")
+                continue
+
+            # h_max_frac must leave room for 2h to stay inside a sane range
+            h_values = np.logspace(np.log10(h_min_frac), np.log10(h_max_frac), n_steps) * abs(fid_val)
+            F_pp = np.empty(n_steps)
+
+            for k, h in enumerate(h_values):
+                # 5-point stencil applied directly to chi2's *gradient* isn't quite
+                # right (chi2 isn't mu), so instead build mu-derivative via the
+                # real 5-point stencil, then form F_pp = dmu^T inv_C dmu, which is
+                # exactly what make_fisher_matrix computes for this diagonal entry.
+                theta_up1 = self.fiducial_dict.copy(); theta_up1[param] += h
+                theta_up2 = self.fiducial_dict.copy(); theta_up2[param] += 2*h
+                theta_dn1 = self.fiducial_dict.copy(); theta_dn1[param] -= h
+                theta_dn2 = self.fiducial_dict.copy(); theta_dn2[param] -= 2*h
+
+                mu_up1 = self.build_theory_vector(self._make_cosmo(theta_up1), silent=True)
+                mu_up2 = self.build_theory_vector(self._make_cosmo(theta_up2), silent=True)
+                mu_dn1 = self.build_theory_vector(self._make_cosmo(theta_dn1), silent=True)
+                mu_dn2 = self.build_theory_vector(self._make_cosmo(theta_dn2), silent=True)
+
+                dmu = (-mu_up2 + 8*mu_up1 - 8*mu_dn1 + mu_dn2) / (12.0 * h)
+                F_pp[k] = dmu @ inv_C @ dmu
+
+            best_start, best_rel_std = 0, np.inf
+            for start in range(0, n_steps - window_size + 1):
+                window = F_pp[start:start + window_size]
+                w_mean = np.mean(window)
+                if w_mean == 0:
+                    continue
+                rel_std = np.std(window) / abs(w_mean)
+                if rel_std < best_rel_std:
+                    best_rel_std = rel_std
+                    best_start = start
+
+            plateau_mask = np.zeros(n_steps, dtype=bool)
+            plateau_mask[best_start:best_start + window_size] = True
+            center_idx = best_start + window_size // 2
+            recommended_h = h_values[center_idx]
+
+            results[param] = {
+                'h_values': h_values, 'F_pp': F_pp, 'plateau_mask': plateau_mask,
+                'recommended_h': recommended_h,
+                'plateau_value': np.mean(F_pp[plateau_mask]),
+                'plateau_rel_std': best_rel_std,
+            }
+            if verbose:
+                flag = "  <-- WARNING: scatter >2%" if best_rel_std > 0.02 else ""
+                print(f"[{param}] recommended h = {recommended_h:.3e}  "
+                      f"(F_pp = {results[param]['plateau_value']:.4e}, "
+                      f"scatter = {best_rel_std:.2%}){flag}")
+
+        if plot:
+            ncols = 3
+            nrows = int(np.ceil(len(results) / ncols))
+            fig, axes = plt.subplots(nrows, ncols, figsize=(5*ncols, 3.5*nrows), squeeze=False)
+            for idx, (param, r) in enumerate(results.items()):
+                ax = axes[idx // ncols][idx % ncols]
+                ax.plot(r['h_values'], r['F_pp'], marker='o', ms=4, color='steelblue')
+                ax.plot(r['h_values'][r['plateau_mask']], r['F_pp'][r['plateau_mask']],
+                         marker='o', ms=6, color='firebrick', lw=2)
+                ax.axvline(r['recommended_h'], color='firebrick', ls='--')
+                ax.set_xscale('log')
+                ax.set_title(f"{param} (h*={r['recommended_h']:.2e})", fontsize=9)
+            for idx in range(len(results), nrows*ncols):
+                axes[idx//ncols][idx % ncols].axis('off')
+            plt.tight_layout(); plt.show()
+
+        return results
+
+    ### CHECK
+    def check_binning_consistency(self, verbose=True):
+        """
+        Confirms that the (2l+1)-weighted ell ranges used to bin the theory
+        vector (build_theory_vector) exactly match the ell ranges used to
+        bin the covariance matrix (CovarianceMatrix._compute_block), bin by
+        bin, at the current survey_params. A mismatch here breaks the
+        rebinning-invariance of the Fisher formula even if each side looks
+        internally consistent.
+        """
+        p = self.survey_params
+        edges = self.ell_bin_edges
+
+        cov_obj, _, _ = build_covariance_from_data(
+            self.cosmology, self.lens_data, self.source_data, **p)
+
+        ells_unbinned_cov = np.arange(cov_obj.l_min, cov_obj.N_ell_unbinned + cov_obj.l_min)
+
+        all_match = True
+        mismatches = []
+
+        n_bins = min(self.num_binned_ells, cov_obj.N_ell_binned)
+        for i_bin in range(n_bins):
+            start_theory = edges[i_bin] - p['l_min']
+            end_theory   = edges[i_bin + 1] - p['l_min']
+            bin_ells_theory = self.ells[start_theory:end_theory]
+
+            start_cov = cov_obj.edges[i_bin] - cov_obj.l_min
+            end_cov   = cov_obj.edges[i_bin + 1] - cov_obj.l_min
+            bin_ells_cov = ells_unbinned_cov[start_cov:end_cov]
+
+            if not np.array_equal(bin_ells_theory, bin_ells_cov):
+                all_match = False
+                mismatches.append((i_bin, bin_ells_theory, bin_ells_cov))
+
+        if verbose:
+            if self.num_binned_ells != cov_obj.N_ell_binned:
+                print(f"WARNING: number of bins differ! "
+                      f"theory-side={self.num_binned_ells}, cov-side={cov_obj.N_ell_binned}")
+            if all_match:
+                print(f"All {n_bins} bins match exactly between theory-vector and covariance binning.")
+            else:
+                print(f"MISMATCH in {len(mismatches)} / {n_bins} bins:")
+                for i_bin, bt, bc in mismatches[:5]:
+                    print(f"  bin {i_bin}: theory ells={bt}, cov ells={bc}")
+
+        # also check pair ordering matches
+        pairs_match = list(self.final_f_map.pairs) == list(cov_obj.f_map.pairs)
+        if verbose:
+            print(f"Pair ordering matches: {pairs_match}")
+            if not pairs_match:
+                print("  theory pairs:", self.final_f_map.pairs)
+                print("  cov pairs:   ", cov_obj.f_map.pairs)
+
+        return all_match and pairs_match and (self.num_binned_ells == cov_obj.N_ell_binned)
+
+    ### CHECK
+    def check_offdiag_stability(self, param_i, param_j, h_i=None, h_j=None,
+                                 C=None, mu_fiducial=None, plot=True):
+        """
+        Computes F_ij = dmu_i @ inv_C @ dmu_j using each parameter's own
+        (already-tuned) step size, and reports it alongside F_ii, F_jj, and
+        the resulting pairwise correlation. Call this at a few different
+        binsize values (by constructing a new FisherForecaster each time)
+        to see whether the off-diagonal term is stable the way the
+        diagonal terms already are.
+        """
+        p = self.survey_params
+        h_i = h_i if h_i is not None else self.step_dict[param_i]
+        h_j = h_j if h_j is not None else self.step_dict[param_j]
+
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(
+                self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        inv_C = np.linalg.inv(C)
+
+        def deriv_5pt(param, h):
+            theta_up1 = self.fiducial_dict.copy(); theta_up1[param] += h
+            theta_up2 = self.fiducial_dict.copy(); theta_up2[param] += 2*h
+            theta_dn1 = self.fiducial_dict.copy(); theta_dn1[param] -= h
+            theta_dn2 = self.fiducial_dict.copy(); theta_dn2[param] -= 2*h
+            mu_up1 = self.build_theory_vector(self._make_cosmo(theta_up1), silent=True)
+            mu_up2 = self.build_theory_vector(self._make_cosmo(theta_up2), silent=True)
+            mu_dn1 = self.build_theory_vector(self._make_cosmo(theta_dn1), silent=True)
+            mu_dn2 = self.build_theory_vector(self._make_cosmo(theta_dn2), silent=True)
+            return (-mu_up2 + 8*mu_up1 - 8*mu_dn1 + mu_dn2) / (12.0 * h)
+
+        dmu_i = deriv_5pt(param_i, h_i)
+        dmu_j = deriv_5pt(param_j, h_j)
+
+        F_ii = dmu_i @ inv_C @ dmu_i
+        F_jj = dmu_j @ inv_C @ dmu_j
+        F_ij = dmu_i @ inv_C @ dmu_j
+        corr_ij = F_ij / np.sqrt(F_ii * F_jj)
+
+        print(f"F_{param_i}{param_i} = {F_ii:.6e}")
+        print(f"F_{param_j}{param_j} = {F_jj:.6e}")
+        print(f"F_{param_i}{param_j} = {F_ij:.6e}")
+        print(f"corr({param_i},{param_j}) = {corr_ij:.6f}")
+
+        return F_ii, F_jj, F_ij, corr_ij
         
     # plot derivatives of spectra wrt different parameters
     ##### CHECK
