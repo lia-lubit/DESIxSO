@@ -1481,14 +1481,12 @@ def build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_le
         galaxy_lensing_tracers.append(tracer)
 
     cmb_lensing_tracer = ccl.CMBLensingTracer(cosmo, z_source=1090)
-    cmb_temperature_tracer = ccl.ISWTracer(cosmo, z_max = z_max, n_chi = n_chi)
 
-    return lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer
+    return lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer
 
 # build tracer dictionary
-def build_tracer_dict(lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer, cmb_temperature_tracer):
+def build_tracer_dict(lens_tracers, galaxy_lensing_tracers, cmb_lensing_tracer):
     tracer_dict = {'kappa_c': cmb_lensing_tracer}
-    tracer_dict['T'] = cmb_temperature_tracer
     
     for i, tr in enumerate(lens_tracers):
         tracer_dict[f'g{i+1}'] = tr
@@ -1625,13 +1623,16 @@ def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linea
         # they are negligable and are set to zero
         if 'kappa_c' in tracer_dict:
             spectra_dict[('E', 'kappa_c')] = np.zeros_like(ells) 
+            spectra_dict[('T', 'kappa_c')] = np.zeros_like(ells) 
         
         for g_bin in lens_bins:
             spectra_dict[('E', g_bin)] = np.zeros_like(ells)     
+            spectra_dict[('T', g_bin)] = np.zeros_like(ells)     
 
         for kg_bin in source_bins:
             spectra_dict[('E', kg_bin)] = np.zeros_like(ells)    
-        
+            spectra_dict[('T', kg_bin)] = np.zeros_like(ells)    
+
     # add noise terms
     if noise_dict is not None:
         for key_noise, noise_val in noise_dict.items():
@@ -1704,7 +1705,7 @@ def create_simplified_desired_pairs(n_lens_bins, n_source_bins, desired_spectra)
         for i in range(1, n_lens_bins + 1):
             all_pairs.append(_canonicalize_pair('E', f'g{i}'))
 
-    if 'GT' in desired_spectra:  # Lens Galaxy Clustering x CMB Temperature (Tomographic / ISW)
+    if 'GT' in desired_spectra:  # Lens Galaxy Clustering x CMB Temperature
         for i in range(1, n_lens_bins + 1):
             all_pairs.append(_canonicalize_pair(f'g{i}', 'T'))
             
@@ -1751,8 +1752,8 @@ def build_covariance_from_data(
     cosmo.compute_growth()
     
     # build spectra
-    lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses, z_max = z_max, n_chi = n_chi)
-    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
+    lens_tracers, source_tracers, cmb_lensing_tracer = build_tracers_from_data(cosmo, lens_data, source_data, magnification_bias_lenses, z_max = z_max, n_chi = n_chi)
+    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer)
     noise_dict = build_noise_dict(full_f_map, ells, shot_noise_lens, shape_noise_source, cmb_noise_kk, cmb_noise_TT = cmb_noise_TT, cmb_noise_EE = cmb_noise_EE)
     full_spectra_dict = build_spectra_dict(cosmo, full_f_map, tracer_dict, ells, noise_dict, linear_emulator=linear_emulator, boost_emulator=boost_emulator, cmb_primaries = cmb_primaries)
 
@@ -2523,9 +2524,9 @@ class SO_x_DESI_Likelihood(Likelihood):
         
         # calculate the theoretical model data vector M(theta) for the current cosmology
         ells = np.arange(self.l_min, self.n_ell + self.l_min) # unbinned ells
-        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator, cmb_primaries = self.cmb_primaries)
 
@@ -2566,9 +2567,9 @@ class SO_x_DESI_Likelihood(Likelihood):
         
         # Build tracers and noise dictionaries
         ells = np.arange(self.l_min, self.n_ell + self.l_min)
-        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer = build_tracers_from_data(
             current_cosmology, self.lens_data, self.source_data, self.magnification_bias_lenses)
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer)
         noise_dict = build_noise_dict(self.f_map, ells, self.shot_noise_lens, self.shape_noise_source, cmb_noise_kk = self.cmb_noise_kk, cmb_noise_TT = self.cmb_noise_TT, cmb_noise_EE = self.cmb_noise_EE)
         current_spectra_dict = build_spectra_dict(current_cosmology, self.f_map, tracer_dict, ells, noise_dict, linear_emulator=self.linear_emulator, boost_emulator=self.boost_emulator, cmb_primaries = self.cmb_primaries)
 
@@ -2584,8 +2585,8 @@ class SO_x_DESI_Likelihood(Likelihood):
         return chi2
         
 # -------------------------------------------------------------------------------------------------------------------------------------------- #
-##### CHECK TO MAKE SURE EQUATIONS AND LOGA_s ARE CORRECT
 ##### FIX TO ACCOUNT FOR LOGARITHMIC BINNING
+# ref https://arxiv.org/pdf/astro-ph/9706198
 # Fisher Forecast class
 class FisherForecaster:
     def __init__(self, cosmology, lens_data, source_data, f_sky_c=0.4, f_sky_g=None, f_sky_l=None, f_sky_c_g=None, f_sky_c_l=None, f_sky_g_l=None, 
@@ -2691,7 +2692,7 @@ class FisherForecaster:
         }
 
     # build a data vector given parameters
-    def build_theory_vector(self, cosmology, silent=True):
+    def build_theory_vector(self, cosmology, noiseless = False, silent=True):
 
         if not silent:
             print("Computing theory vector...")
@@ -2699,10 +2700,16 @@ class FisherForecaster:
         cosmology.compute_growth()
         p = self.survey_params
         
-        lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer = build_tracers_from_data(
+        lens_tracers, source_tracers, cmb_lensing_tracer = build_tracers_from_data(
             cosmology, self.lens_data, self.source_data, p['magnification_bias_lenses'], z_max = p['z_max'], n_chi=p['n_chi'])
-        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer, cmb_temperature_tracer)
-        noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], cmb_noise_kk = p['cmb_noise_kk'], cmb_noise_TT = p['cmb_noise_TT'], cmb_noise_EE = p['cmb_noise_EE'])
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_lensing_tracer)
+
+        # build noisy or noieless vector, as needed
+        if noiseless: 
+            noise_dict = build_noise_dict(self.full_f_map, self.ells, None, None, cmb_noise_kk = None, cmb_noise_TT = None, cmb_noise_EE = None)
+        else: 
+            noise_dict = build_noise_dict(self.full_f_map, self.ells, p['shot_noise_lens'], p['shape_noise_source'], cmb_noise_kk = p['cmb_noise_kk'], cmb_noise_TT = p['cmb_noise_TT'], cmb_noise_EE = p['cmb_noise_EE'])
+
         full_spectra_dict = build_spectra_dict(cosmology, self.full_f_map, tracer_dict, self.ells, noise_dict, linear_emulator=p['linear_emulator'], boost_emulator=p['boost_emulator'], cmb_primaries=self.cmb_primaries)
         
         if self.sliced_pairs is not None: 
@@ -2765,11 +2772,11 @@ class FisherForecaster:
             cosmo_down1 = self._make_cosmo(params_down1)
             cosmo_down2 = self._make_cosmo(params_down2)
 
-            # Theory vector derivatives (mu)
-            mu_up1   = self.build_theory_vector(cosmo_up1)
-            mu_up2   = self.build_theory_vector(cosmo_up2)
-            mu_down1 = self.build_theory_vector(cosmo_down1)
-            mu_down2 = self.build_theory_vector(cosmo_down2)
+            # build noiseless theory vector derivatives (mu)
+            mu_up1   = self.build_theory_vector(cosmo_up1, noiseless=True)
+            mu_up2   = self.build_theory_vector(cosmo_up2, noiseless=True)
+            mu_down1 = self.build_theory_vector(cosmo_down1, noiseless=True)
+            mu_down2 = self.build_theory_vector(cosmo_down2, noiseless=True)
 
             mu_derivatives[param] = (-mu_up2 + 8.0 * mu_up1 - 8.0 * mu_down1 + mu_down2) / (12.0 * step)
 
@@ -2899,6 +2906,7 @@ class FisherForecaster:
 
     #### CHECK
     def compute_baryon_feedback_bias(self, T_AGN_true, T_AGN_assumed=None, C=None, desired_params=None):
+        # ref https://academic.oup.com/mnras/article/391/1/228/1120808
         """
         Linear Fisher-bias estimate of the shift induced on desired_params if the
         true sky has HMCode log10(T_AGN) = T_AGN_true but the analysis (F, C,
@@ -2906,6 +2914,7 @@ class FisherForecaster:
         Requires self.baryon_feedback_model == 'hmcode' and make_fisher_matrix()
         to have already been run (uses self.F, self.cov, self.mu_derivatives).
         """
+        
         if self.baryon_feedback_model != 'hmcode':
             raise ValueError("compute_baryon_feedback_bias currently assumes baryon_feedback_model='hmcode'.")
         if self.F is None or self.cov is None or not hasattr(self, 'mu_derivatives'):
@@ -2923,11 +2932,11 @@ class FisherForecaster:
         # theory vector at the *assumed* feedback level (should match what F/mu_derivatives used)
         old_T_AGN = self.log10_T_AGN
         self.log10_T_AGN = T_AGN_assumed
-        mu_assumed = self.build_theory_vector(self._make_cosmo(self.fiducial_dict), silent=True)
+        mu_assumed = self.build_theory_vector(self._make_cosmo(self.fiducial_dict), noiseless=True, silent=True)
     
         # theory vector at the *true* feedback level
         self.log10_T_AGN = T_AGN_true
-        mu_true = self.build_theory_vector(self._make_cosmo(self.fiducial_dict), silent=True)
+        mu_true = self.build_theory_vector(self._make_cosmo(self.fiducial_dict), noiseless=True, silent=True)
     
         self.log10_T_AGN = old_T_AGN  # restore state
     
@@ -3251,8 +3260,8 @@ class FisherForecaster:
         if mu is None:
             mu = self.build_theory_vector(self.cosmology)
             
-        if C_derivatives is None or mu_derivatives is None:
-            C_derivatives, mu_derivatives = self.get_derivatives(desired_params)
+#       if C_derivatives is None or mu_derivatives is None:
+        C_derivatives, mu_derivatives = self.get_derivatives(desired_params)
 
         self.C_derivatives = C_derivatives
         self.mu_derivatives = mu_derivatives
@@ -3260,9 +3269,10 @@ class FisherForecaster:
         n_params = len(desired_params)
         F = np.zeros((n_params, n_params))
         inv_C = np.linalg.inv(C)
-        F_mu_only = np.zeros((n_params, n_params))
+        F_mu = np.zeros((n_params, n_params))
         F_cov_only = np.zeros((n_params, n_params))
-        
+
+        #### WRITE OUT MATH
         for i, p_i in enumerate(desired_params):
             for j, p_j in enumerate(desired_params):
                 dC_di = C_derivatives[p_i]
@@ -3271,14 +3281,14 @@ class FisherForecaster:
                 dmu_dj = mu_derivatives[p_j][:, np.newaxis]
         
                 matrix1 = inv_C @ dC_di @ inv_C @ dC_dj
-                matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
+                matrix2 = dmu_di.T @ inv_C @ dmu_dj
+                #matrix2 = inv_C @ ((dmu_di @ dmu_dj.T) + (dmu_dj @ dmu_di.T))
         
                 F_cov_only[i, j] = 0.5 * np.trace(matrix1)
-                F_mu_only[i, j]  = 0.5 * np.trace(matrix2)
-                F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
-
-        self.F_cov_only = F_cov_only
-        self.F_mu_only = F_mu_only
+                F_mu[i, j]  = matrix2.item()
+                F[i, j] = F_cov_only[i,j] + F_mu[i, j]
+                #F[i, j] = 0.5 * np.trace(matrix1 + matrix2)
+                
         self.F = F
 
         # calculate covariance matrix
