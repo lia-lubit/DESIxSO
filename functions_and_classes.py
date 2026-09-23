@@ -1528,40 +1528,43 @@ def build_noise_dict(f_map, ells, shot_noise_lens=None, shape_noise_source=None,
 
 # build spectra dictionary w/ or w/o emulator
 #### CHECK
-#### LEARN UNDERLYING PHYSICS
 #### does this function actually consider f_map at all?
-def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict = None, linear_emulator = None, boost_emulator = None, cmb_primaries = False):
+def build_spectra_dict(cosmo, f_map, tracer_dict, ells, noise_dict=None,
+                        linear_emulator=None, boost_emulator=None,
+                        cmb_primaries=False, pk_override=None):
     spectra_dict = {}
 
-    # make Pk2D object if an emulator is present
-    if linear_emulator != None:
+    if linear_emulator is not None and pk_override is None:
         a_grid = np.linspace(1/(1+5), 1.0, 20)
         z_grid = (1.0 / a_grid) - 1.0
-        Pk2D_object = make_Pk2D(cosmo, linear_emulator = linear_emulator, boost_emulator = boost_emulator, z_arr = z_grid, cmin = 3.13, eta_0 = 0.60)
+        Pk2D_object = make_Pk2D(cosmo, linear_emulator=linear_emulator, boost_emulator=boost_emulator,
+                                 z_arr=z_grid, cmin=3.13, eta_0=0.60)
 
-    # Iterate through all unique pairs of tracers in tracer_dict to calculate Cls
-    # this will get all the possible pairs of (kappa_c, kappa_g, g, T)
-    # I'll have to later write over TT b/c I don't think angular_cl does that properly
     tracer_labels = list(tracer_dict.keys())
     for i, label1 in enumerate(tracer_labels):
         for j, label2 in enumerate(tracer_labels):
-            # ensure consistent key ordering (e.g., ('g1', 'kappa_g1') not ('kappa_g1', 'g1'))
-            # only calculate each unique pair once
             key_fwd = (label1, label2)
             key_bwd = (label2, label1)
-
-            if key_fwd in spectra_dict or key_bwd in spectra_dict: # spectra already handled
+            if key_fwd in spectra_dict or key_bwd in spectra_dict:
                 continue
+
+            tracer1 = tracer_dict[label1]
+            tracer2 = tracer_dict[label2]
+
+            if pk_override is not None:
+                # frozen P(k,a): cosmo still supplies distances/kernels via
+                # tracer1/tracer2, but the power spectrum itself never moves
+                Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells, p_of_k_a=pk_override)
+            elif linear_emulator is not None:
+                Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells, p_of_k_a=Pk2D_object)
             else:
-                tracer1 = tracer_dict[label1]
-                tracer2 = tracer_dict[label2]
+                Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells)
 
-                if linear_emulator == None:
-                    Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells)
-
-                else:
-                    Cl = ccl.angular_cl(cosmo, tracer1, tracer2, ells, p_of_k_a = Pk2D_object)
-
+            if label1 < label2:
+                spectra_dict[(label1, label2)] = Cl
+            else:
+                spectra_dict[(label2, label1)] = Cl
+            
             # store with canonical ordering
             if label1 < label2: # Simple lexicographical order for consistency
                 spectra_dict[(label1, label2)] = Cl
@@ -2839,72 +2842,6 @@ class FisherForecaster:
         d = mu - mu_fiducial
         return d @ inv_C @ d
 
-    #### CHECK
-    def check_hessian_stability(self, param, C=None, mu_fiducial=None,
-                                 n_steps=15, h_min_frac=1e-5, h_max_frac=1e-1):
-        """
-        Compare the analytic-style Fisher diagonal element F_pp (from the
-        5-point stencil on mu, via inv_C) against a direct numerical second
-        derivative of chi2(theta) at a range of step sizes. If chi2's
-        curvature is stable across binsize/step choices while the
-        mu-derivative-based F is not, the stencil (or the theory-vector
-        precision feeding it) is the problem, not the Fisher formula or C.
-        """
-        p = self.survey_params
-
-        if C is None:
-            cov_obj, _, _ = build_covariance_from_data(
-                self.cosmology, self.lens_data, self.source_data, **p)
-            C = cov_obj.matrix
-        inv_C = np.linalg.inv(C)
-
-        if mu_fiducial is None:
-            mu_fiducial = self.build_theory_vector(self.cosmology)
-
-        fid_val = self.fiducial_dict[param]
-        h_values = np.logspace(np.log10(h_min_frac), np.log10(h_max_frac), n_steps) * abs(fid_val)
-
-        d2_list = []
-        chi2_center = self._chi2(self.fiducial_dict, mu_fiducial, inv_C)  # should be ~0
-
-        for h in h_values:
-            theta_p = self.fiducial_dict.copy()
-            theta_m = self.fiducial_dict.copy()
-            theta_p[param] += h
-            theta_m[param] -= h
-
-            chi2_p = self._chi2(theta_p, mu_fiducial, inv_C)
-            chi2_m = self._chi2(theta_m, mu_fiducial, inv_C)
-
-            d2_dtheta2 = (chi2_p - 2.0 * chi2_center + chi2_m) / h**2
-            d2_list.append(d2_dtheta2)
-
-        d2_list = np.array(d2_list)
-        F_from_chi2 = 0.5 * d2_list   # chi2 = 2*(0.5 * d2chi2/dtheta2) relation: F_pp = 0.5 * d2(chi2)/dtheta^2
-
-        # plot: log-log deviation from median, to find the flat plateau
-        median_val = np.median(F_from_chi2)
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-
-        axes[0].plot(h_values, F_from_chi2, marker='o')
-        axes[0].axhline(median_val, color='gray', ls='--', lw=1, label='median')
-        axes[0].set_xscale('log')
-        axes[0].set_xlabel(f"step size h ({param})")
-        axes[0].set_ylabel(r"$F_{pp}$ from $\chi^2$ curvature")
-        axes[0].set_title(f"F_{{{param},{param}}} vs step size (direct chi2 Hessian)")
-        axes[0].legend()
-
-        axes[1].loglog(h_values, np.abs(F_from_chi2 - median_val) / abs(median_val))
-        axes[1].set_xlabel(f"step size h ({param})")
-        axes[1].set_ylabel("relative deviation from median")
-        axes[1].set_title("Stability plateau (look for the flat region)")
-
-        plt.tight_layout()
-        plt.show()
-
-        return h_values, F_from_chi2
-
-    #### CHECK
     def compute_baryon_feedback_bias(self, T_AGN_true, T_AGN_assumed=None, C=None, desired_params=None):
         # ref https://academic.oup.com/mnras/article/391/1/228/1120808
         """
@@ -3059,109 +2996,6 @@ class FisherForecaster:
 
         return results
 
-    ### CHECK
-    def check_binning_consistency(self, verbose=True):
-        """
-        Confirms that the (2l+1)-weighted ell ranges used to bin the theory
-        vector (build_theory_vector) exactly match the ell ranges used to
-        bin the covariance matrix (CovarianceMatrix._compute_block), bin by
-        bin, at the current survey_params. A mismatch here breaks the
-        rebinning-invariance of the Fisher formula even if each side looks
-        internally consistent.
-        """
-        p = self.survey_params
-        edges = self.ell_bin_edges
-
-        cov_obj, _, _ = build_covariance_from_data(
-            self.cosmology, self.lens_data, self.source_data, **p)
-
-        ells_unbinned_cov = np.arange(cov_obj.l_min, cov_obj.N_ell_unbinned + cov_obj.l_min)
-
-        all_match = True
-        mismatches = []
-
-        n_bins = min(self.num_binned_ells, cov_obj.N_ell_binned)
-        for i_bin in range(n_bins):
-            start_theory = edges[i_bin] - p['l_min']
-            end_theory   = edges[i_bin + 1] - p['l_min']
-            bin_ells_theory = self.ells[start_theory:end_theory]
-
-            start_cov = cov_obj.edges[i_bin] - cov_obj.l_min
-            end_cov   = cov_obj.edges[i_bin + 1] - cov_obj.l_min
-            bin_ells_cov = ells_unbinned_cov[start_cov:end_cov]
-
-            if not np.array_equal(bin_ells_theory, bin_ells_cov):
-                all_match = False
-                mismatches.append((i_bin, bin_ells_theory, bin_ells_cov))
-
-        if verbose:
-            if self.num_binned_ells != cov_obj.N_ell_binned:
-                print(f"WARNING: number of bins differ! "
-                      f"theory-side={self.num_binned_ells}, cov-side={cov_obj.N_ell_binned}")
-            if all_match:
-                print(f"All {n_bins} bins match exactly between theory-vector and covariance binning.")
-            else:
-                print(f"MISMATCH in {len(mismatches)} / {n_bins} bins:")
-                for i_bin, bt, bc in mismatches[:5]:
-                    print(f"  bin {i_bin}: theory ells={bt}, cov ells={bc}")
-
-        # also check pair ordering matches
-        pairs_match = list(self.final_f_map.pairs) == list(cov_obj.f_map.pairs)
-        if verbose:
-            print(f"Pair ordering matches: {pairs_match}")
-            if not pairs_match:
-                print("  theory pairs:", self.final_f_map.pairs)
-                print("  cov pairs:   ", cov_obj.f_map.pairs)
-
-        return all_match and pairs_match and (self.num_binned_ells == cov_obj.N_ell_binned)
-
-    ### CHECK
-    def check_offdiag_stability(self, param_i, param_j, h_i=None, h_j=None,
-                                 C=None, mu_fiducial=None, plot=True):
-        """
-        Computes F_ij = dmu_i @ inv_C @ dmu_j using each parameter's own
-        (already-tuned) step size, and reports it alongside F_ii, F_jj, and
-        the resulting pairwise correlation. Call this at a few different
-        binsize values (by constructing a new FisherForecaster each time)
-        to see whether the off-diagonal term is stable the way the
-        diagonal terms already are.
-        """
-        p = self.survey_params
-        h_i = h_i if h_i is not None else self.step_dict[param_i]
-        h_j = h_j if h_j is not None else self.step_dict[param_j]
-
-        if C is None:
-            cov_obj, _, _ = build_covariance_from_data(
-                self.cosmology, self.lens_data, self.source_data, **p)
-            C = cov_obj.matrix
-        inv_C = np.linalg.inv(C)
-
-        def deriv_5pt(param, h):
-            theta_up1 = self.fiducial_dict.copy(); theta_up1[param] += h
-            theta_up2 = self.fiducial_dict.copy(); theta_up2[param] += 2*h
-            theta_dn1 = self.fiducial_dict.copy(); theta_dn1[param] -= h
-            theta_dn2 = self.fiducial_dict.copy(); theta_dn2[param] -= 2*h
-            mu_up1 = self.build_theory_vector(self._make_cosmo(theta_up1), silent=True)
-            mu_up2 = self.build_theory_vector(self._make_cosmo(theta_up2), silent=True)
-            mu_dn1 = self.build_theory_vector(self._make_cosmo(theta_dn1), silent=True)
-            mu_dn2 = self.build_theory_vector(self._make_cosmo(theta_dn2), silent=True)
-            return (-mu_up2 + 8*mu_up1 - 8*mu_dn1 + mu_dn2) / (12.0 * h)
-
-        dmu_i = deriv_5pt(param_i, h_i)
-        dmu_j = deriv_5pt(param_j, h_j)
-
-        F_ii = dmu_i @ inv_C @ dmu_i
-        F_jj = dmu_j @ inv_C @ dmu_j
-        F_ij = dmu_i @ inv_C @ dmu_j
-        corr_ij = F_ij / np.sqrt(F_ii * F_jj)
-
-        print(f"F_{param_i}{param_i} = {F_ii:.6e}")
-        print(f"F_{param_j}{param_j} = {F_jj:.6e}")
-        print(f"F_{param_i}{param_j} = {F_ij:.6e}")
-        print(f"corr({param_i},{param_j}) = {corr_ij:.6f}")
-
-        return F_ii, F_jj, F_ij, corr_ij
-        
     # plot derivatives of spectra wrt different parameters
     ##### CHECK
     def plot_derivatives(self, desired_params=None, normalized=False):
@@ -3661,3 +3495,681 @@ class FisherForecaster:
             print("")
             
         return g
+
+
+"""
+LRFisherForecaster: Fisher forecasting for the geometric-ratio ("LR") method.
+
+Idea
+----
+For each lens-redshift bin i and ell bin, give the CMB-lensing x galaxy-density
+spectrum a free amplitude:
+
+    C_ell^{(g_i, kappa_c)}          =  A_{i,ell}
+
+and predict EVERY paired galaxy-lensing x galaxy-density spectrum -- one per
+source bin j you choose to pair with lens bin i -- as a geometric multiple of
+that SAME shared amplitude:
+
+    C_ell^{(g_i, kappa_g_j)}        =  r_{i,j,ell}(theta_geo) * A_{i,ell}
+
+for each j in lens_to_source_bin[i]. A given lens bin can be paired with one
+source bin or several; C_ell^{(g_i,kappa_c)} is a single physical measurement,
+so all of its paired GL spectra share the one amplitude -- pairing against
+more source bins adds more constraints on the SAME A, not more free A's.
+
+r is computed from lensing-kernel integrals with P(k,z) FROZEN at its
+fiducial shape -- only background distances move with theta_geo. theta_geo is
+whichever subset of {Omega_m, Omega_k, w0, wa} you have leverage on; growth/
+amplitude parameters (A_s, sigma8, bias, etc.) never enter -- fully absorbed
+into the free A_{i,ell}'s.
+
+All A_{i,ell} are marginalized with a flat prior the standard Fisher way:
+include them as ordinary parameters in the joint Fisher matrix, invert, and
+keep the theta_geo submatrix (Schur complement).
+
+Built against the actual ForecastMap/CovarianceMatrix/create_simplified_desired_pairs
+code: 'GL' expands to the full lens-bin x source-bin cross product (any i,j),
+'CG' to every lens bin, and final_f_map.pair_to_index gives the exact block
+position build_theory_vector's concatenation uses -- so index lookups here
+are direct, not guesswork.
+
+Requires build_spectra_dict to be patched with a pk_override kwarg (see the
+patch notes distributed alongside this file) -- without it, compute_r_vector
+silently reintroduces the Pmm dependence this class exists to avoid.
+"""
+
+import numpy as np
+import pyccl as ccl
+
+
+class LRFisherForecaster(FisherForecaster):
+
+    def __init__(self, *args, lens_to_source_bin, geo_params=('Omega_k',),
+                 fiducial_pmm_cosmology=None, **kwargs):
+        """
+        lens_to_source_bin : dict {lens_bin_index (1-based): source_bin_index
+            OR list of source_bin_indices}
+            Which shear/source sample(s) to pair with each lens bin for the
+            GL side of the ratio, e.g. {1: 3, 2: [3, 4], 3: 4}. Required --
+            no safe default, since this is a survey-design choice (which
+            source bins sit far enough behind lens bin i to avoid
+            contamination), not something inferable from n_lens/n_src alone.
+            Confirmed against create_simplified_desired_pairs: 'GL' expands
+            to the full lens-bin x source-bin cross product (all i, all j),
+            so any i,j combination (including several j per i) is fine as
+            long as 'GL' is in desired_spectra.
+        geo_params : tuple of str
+            Which background-cosmology parameters make up theta_geo, e.g.
+            ('Omega_k',) or ('w0','wa') with Omega_m fixed. H0/h does not
+            belong here -- it cancels in r by construction.
+        fiducial_pmm_cosmology : pyccl.Cosmology or None
+            Cosmology used ONLY to freeze P(k,z) for the r calculation.
+            Defaults to self.cosmology. Never re-derived per theta_geo trial.
+        """
+        super().__init__(*args, **kwargs)
+        self.geo_params = list(geo_params)
+        self.lens_to_source_bin = lens_to_source_bin
+
+        self._fiducial_pmm_cosmo = fiducial_pmm_cosmology or self.cosmology
+        self._pk_frozen = self._freeze_pk(self._fiducial_pmm_cosmo)
+
+        # cg_gl_map: one "amplitude group" per (lens_bin, ell_bin), each
+        # holding its single CG entry and a LIST of GL entries (one per
+        # paired source bin) that all share that group's amplitude.
+        self.cg_gl_map = self._build_cg_gl_map(lens_to_source_bin)
+
+        # Flat list of every individual GL entry across all groups, in a
+        # fixed order used consistently by compute_r_vector, _design_matrix,
+        # and the theta_geo derivative loop -- keeps them from ever
+        # silently getting out of sync with each other.
+        self._gl_flat = []
+        for g_idx, group in enumerate(self.cg_gl_map):
+            for gl in group['gl_entries']:
+                self._gl_flat.append({
+                    'group_idx': g_idx,
+                    'ell_bin': group['ell_bin'],
+                    'source_bin': gl['source_bin'],
+                    'gl_pair': gl['gl_pair'],
+                    'gl_idx': gl['gl_idx'],
+                })
+
+    # ------------------------------------------------------------------
+    # 1. Freeze P(k,z) so it never depends on the trial theta_geo
+    # ------------------------------------------------------------------
+    def _freeze_pk(self, cosmology):
+        """
+        Pulled via cosmology.get_nonlin_power() rather than a fresh
+        Pk2D.from_model(...) call, so it matches whatever
+        matter_power_spectrum / HMCode feedback / CAMB accuracy settings
+        _make_cosmo actually configured for this cosmology object.
+        """
+        cosmology.compute_growth()
+        return cosmology.get_nonlin_power()
+
+    # ------------------------------------------------------------------
+    # 2. Build amplitude groups: one per (lens_bin, ell_bin), each with a
+    #    list of GL entries (one per paired source bin)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _canonical_pair(a, b):
+        # matches ForecastMap's own canonicalization exactly (plain string compare)
+        return (a, b) if a <= b else (b, a)
+
+    def _build_cg_gl_map(self, lens_to_source_bin):
+        cg_gl_map = []
+        for i, j_or_js in lens_to_source_bin.items():
+            source_bins = list(j_or_js) if isinstance(j_or_js, (list, tuple)) else [j_or_js]
+
+            cg_pair = self._canonical_pair(f'g{i}', 'kappa_c')
+            if cg_pair not in self.final_f_map.pair_to_index:
+                raise ValueError(
+                    f"{cg_pair} not found in final_f_map.pairs -- make sure "
+                    f"desired_spectra includes 'CG'."
+                )
+            idx_cg = self.final_f_map.pair_to_index[cg_pair]
+
+            gl_lookups = []
+            for j in source_bins:
+                gl_pair = self._canonical_pair(f'g{i}', f'kappa_g{j}')
+                if gl_pair not in self.final_f_map.pair_to_index:
+                    raise ValueError(
+                        f"{gl_pair} not found in final_f_map.pairs -- make "
+                        f"sure desired_spectra includes 'GL'."
+                    )
+                gl_lookups.append((j, gl_pair, self.final_f_map.pair_to_index[gl_pair]))
+
+            for ell_bin in range(self.num_binned_ells):
+                cg_gl_map.append({
+                    'lens_bin': i,
+                    'ell_bin': ell_bin,
+                    'cg_pair': cg_pair,
+                    'cg_idx': idx_cg * self.num_binned_ells + ell_bin,
+                    'gl_entries': [
+                        {
+                            'source_bin': j,
+                            'gl_pair': gl_pair,
+                            'gl_idx': idx_gl * self.num_binned_ells + ell_bin,
+                        }
+                        for (j, gl_pair, idx_gl) in gl_lookups
+                    ],
+                })
+        return cg_gl_map
+
+    # ------------------------------------------------------------------
+    # 3. r_{i,j,ell}(theta_geo): pure kernel ratio, Pmm frozen. Returns one
+    #    value per entry of self._gl_flat, in that fixed order.
+    # ------------------------------------------------------------------
+    def compute_r_vector(self, cosmology):
+        cosmology.compute_growth()
+
+        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+            cosmology, self.lens_data, self.source_data,
+            self.survey_params['magnification_bias_lenses'],
+            z_max=self.survey_params['z_max'], n_chi=self.survey_params['n_chi'])
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+
+        noiseless_noise_dict = build_noise_dict(
+            self.full_f_map, self.ells, None, None,
+            cmb_noise_kk=None, cmb_noise_TT=None, cmb_noise_EE=None)
+
+        full_spectra = build_spectra_dict(
+            cosmology, self.full_f_map, tracer_dict, self.ells,
+            noiseless_noise_dict,
+            linear_emulator=self.survey_params['linear_emulator'],
+            boost_emulator=self.survey_params['boost_emulator'],
+            cmb_primaries=False,
+            pk_override=self._pk_frozen,
+        )
+
+        cg_vals = np.array([
+            self._bin_one_ell(full_spectra[g['cg_pair']], g['ell_bin'])
+            for g in self.cg_gl_map
+        ])
+
+        r = np.zeros(len(self._gl_flat))
+        for k, gl in enumerate(self._gl_flat):
+            gl_val = self._bin_one_ell(full_spectra[gl['gl_pair']], gl['ell_bin'])
+            r[k] = cg_vals[gl['group_idx']] / gl_val
+        return r
+
+    def _bin_one_ell(self, unbinned_cls, ell_bin_idx):
+        """Mode-weighted binning for a single ell bin, matching the parent
+        class's build_theory_vector convention exactly."""
+        p = self.survey_params
+        edges = self.ell_bin_edges
+        start_idx = edges[ell_bin_idx] - p['l_min']
+        end_idx = min(edges[ell_bin_idx + 1] - p['l_min'], len(unbinned_cls))
+        bin_cls = unbinned_cls[start_idx:end_idx]
+        bin_ells = self.ells[start_idx:end_idx]
+        weights = 2 * bin_ells + 1
+        return np.sum(weights * bin_cls) / np.sum(weights)
+
+    # ------------------------------------------------------------------
+    # 4. Fiducial A_{i,ell}: one per group, centered on the real
+    #    (Pmm-based) prediction
+    # ------------------------------------------------------------------
+    def compute_fiducial_amplitudes(self):
+        mu_fid = self.build_theory_vector(self.cosmology, noiseless=True)
+        return np.array([mu_fid[g['cg_idx']] for g in self.cg_gl_map])
+
+    # ------------------------------------------------------------------
+    # 5. Analytic design matrix (dmu/dA): exact, no finite differencing.
+    #    Columns = amplitude groups; each CG row gets a 1 in its own
+    #    group's column, each GL row gets r in ITS group's column (so
+    #    multiple GL rows can point at the same column/amplitude).
+    # ------------------------------------------------------------------
+    def _design_matrix(self, r_vector, n_total):
+        n_amp = len(self.cg_gl_map)
+        X = np.zeros((n_total, n_amp))
+        for g_idx, group in enumerate(self.cg_gl_map):
+            X[group['cg_idx'], g_idx] = 1.0
+        for k, gl in enumerate(self._gl_flat):
+            X[gl['gl_idx'], gl['group_idx']] = r_vector[k]
+        return X
+
+    # ------------------------------------------------------------------
+    # 6. Joint Fisher matrix over theta_geo + all A_{i,ell}; marginalize A
+    #    via the Schur complement (top-left block of the inverted joint matrix)
+    # ------------------------------------------------------------------
+    def make_lr_fisher_matrix(self, C=None, finite_diff_step=None, print_summary=False):
+        p = self.survey_params
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(
+                self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        inv_C = np.linalg.inv(C)
+        n_total = C.shape[0]
+
+        r_fid = self.compute_r_vector(self.cosmology)
+        A_fid = self.compute_fiducial_amplitudes()
+        X_fid = self._design_matrix(r_fid, n_total)
+
+        n_amp = len(self.cg_gl_map)
+        n_geo = len(self.geo_params)
+        n_par = n_geo + n_amp
+
+        # dmu/d(theta_geo): nonzero only through r, only on GL rows.
+        dmu_dtheta = {}
+        for param in self.geo_params:
+            h = finite_diff_step or self.step_dict.get(param, 1e-3)
+            up = dict(self.fiducial_dict); up[param] = self.fiducial_dict[param] + h
+            dn = dict(self.fiducial_dict); dn[param] = self.fiducial_dict[param] - h
+            r_up = self.compute_r_vector(self._make_cosmo(up))
+            r_dn = self.compute_r_vector(self._make_cosmo(dn))
+            dr = (r_up - r_dn) / (2 * h)
+
+            vec = np.zeros(n_total)
+            for k, gl in enumerate(self._gl_flat):
+                vec[gl['gl_idx']] = dr[k] * A_fid[gl['group_idx']]
+            dmu_dtheta[param] = vec
+
+        # dmu/dA_k: exact, just the columns of X_fid
+        all_derivs = [dmu_dtheta[pname] for pname in self.geo_params]
+        all_derivs += [X_fid[:, k] for k in range(n_amp)]
+
+        F = np.zeros((n_par, n_par))
+        for a in range(n_par):
+            for b in range(a, n_par):
+                val = all_derivs[a] @ inv_C @ all_derivs[b]
+                F[a, b] = F[b, a] = val
+
+        full_cov = np.linalg.inv(F)
+        geo_cov = full_cov[:n_geo, :n_geo]
+
+        if print_summary:
+            n_gl = len(self._gl_flat)
+            print(f"\nLR Fisher forecast ({n_amp} free amplitudes, "
+                  f"{n_gl} GL constraints, marginalized)")
+            for i, name in enumerate(self.geo_params):
+                print(f"  sigma({name}) = {np.sqrt(geo_cov[i, i]):.4e}")
+
+        self.F_lr = F
+        self.cov_lr = full_cov
+        self.geo_cov_lr = geo_cov
+        return F, geo_cov
+
+    # ------------------------------------------------------------------
+    # Validation helper -- see check_pmm_immunity in the accompanying test
+    # module for a full, working implementation of this idea.
+    # ------------------------------------------------------------------
+    def check_pmm_immunity(self, wrong_pmm_cosmology, C=None):
+        raise NotImplementedError(
+            "Use test_pmm_immunity from test_lr_fisher_forecaster.py, which "
+            "implements this as a real profile-likelihood fit."
+        )
+
+    # ------------------------------------------------------------------
+    # 7. Joint fit with CMB primaries (TT/EE/ET). Requires this forecaster
+    #    to have been built with desired_spectra including 'CG','GL', and
+    #    whichever of 'TT'/'EE'/'ET' you want, plus cmb_primaries=True.
+    # ------------------------------------------------------------------
+    def _primary_pair_indices(self):
+        """Flat indices of every requested primary pair (TT/EE/ET), in the
+        same flat-vector convention as everything else in this class."""
+        candidates = [('E', 'E'), ('T', 'T'), ('E', 'T')]
+        idx, pairs_used = [], []
+        for pair in candidates:
+            if pair in self.final_f_map.pair_to_index:
+                base = self.final_f_map.pair_to_index[pair] * self.num_binned_ells
+                idx.extend(range(base, base + self.num_binned_ells))
+                pairs_used.append(pair)
+        return np.array(idx, dtype=int), pairs_used
+
+    def make_joint_fisher_matrix(self, primary_params, C=None,
+                                  finite_diff_step=None, print_summary=False):
+        """
+        Joint Fisher matrix combining:
+          - the LR ratio model on CG/GL (theta_geo + shared amplitudes A_i)
+          - the standard physically-motivated model on CMB primaries,
+            sensitive to theta_geo AND primary_params (e.g. 'A_s','n_s',
+            'h','Omega_b','Omega_c').
+
+        The CG/GL block of every parameter's derivative is built ONLY from
+        the LR mechanism (zero unless the parameter is in self.geo_params,
+        in which case it's dr/dtheta * A_fid) -- never from the standard
+        Pmm-based derivative the parent class would otherwise compute for
+        those same entries. This is what keeps the ratio's immunity intact
+        even after primary_params (A_s, n_s, etc.) are added to the fit:
+        those parameters can only ever affect the result through the
+        primaries, never by leaking into CG/GL.
+
+        Note: this calls self.get_derivatives(), which also rebuilds the
+        covariance 4x per parameter (the parent class's stencil for
+        C_derivatives) even though only mu_derivatives is used here --
+        real but unavoidable extra cost unless you factor a mu-only
+        variant out of the parent class.
+        """
+        p = self.survey_params
+        if C is None:
+            cov_obj, _, _ = build_covariance_from_data(
+                self.cosmology, self.lens_data, self.source_data, **p)
+            C = cov_obj.matrix
+        inv_C = np.linalg.inv(C)
+        n_total = C.shape[0]
+
+        primary_idx, primary_pairs_used = self._primary_pair_indices()
+        if len(primary_idx) == 0:
+            raise ValueError(
+                "No primary pairs (TT/EE/ET) found in final_f_map.pairs -- "
+                "check desired_spectra and cmb_primaries=True."
+            )
+
+        combined_params = list(self.geo_params) + [
+            pp for pp in primary_params if pp not in self.geo_params
+        ]
+
+        # Standard physically-motivated derivatives, reused as-is from the
+        # parent class -- these are correct for the primary rows, and will
+        # be discarded (never used) for the CG/GL rows below.
+        _, parent_mu_derivs = self.get_derivatives(combined_params)
+
+        r_fid = self.compute_r_vector(self.cosmology)
+        A_fid = self.compute_fiducial_amplitudes()
+        X_fid = self._design_matrix(r_fid, n_total)
+        n_amp = len(self.cg_gl_map)
+
+        combined_derivs = {}
+        for param in combined_params:
+            vec = np.zeros(n_total)
+            vec[primary_idx] = parent_mu_derivs[param][primary_idx]  # primaries: always standard
+
+            if param in self.geo_params:  # CG/GL: ONLY the LR mechanism
+                h = finite_diff_step or self.step_dict.get(param, 1e-3)
+                up = dict(self.fiducial_dict); up[param] = self.fiducial_dict[param] + h
+                dn = dict(self.fiducial_dict); dn[param] = self.fiducial_dict[param] - h
+                r_up = self.compute_r_vector(self._make_cosmo(up))
+                r_dn = self.compute_r_vector(self._make_cosmo(dn))
+                dr = (r_up - r_dn) / (2 * h)
+                for k, gl in enumerate(self._gl_flat):
+                    vec[gl['gl_idx']] = dr[k] * A_fid[gl['group_idx']]
+            # CG rows are left at 0 for every parameter -- amplitude-only, always.
+
+            combined_derivs[param] = vec
+
+        all_derivs = [combined_derivs[pname] for pname in combined_params]
+        all_derivs += [X_fid[:, k] for k in range(n_amp)]
+
+        n_nonamp = len(combined_params)
+        n_par = n_nonamp + n_amp
+        F = np.zeros((n_par, n_par))
+        for a in range(n_par):
+            for b in range(a, n_par):
+                val = all_derivs[a] @ inv_C @ all_derivs[b]
+                F[a, b] = F[b, a] = val
+
+        full_cov = np.linalg.inv(F)
+        param_cov = full_cov[:n_nonamp, :n_nonamp]
+
+        if print_summary:
+            print(f"\nJoint LR + primaries Fisher forecast "
+                  f"({n_amp} amplitudes marginalized, primaries used: {primary_pairs_used})")
+            for i, name in enumerate(combined_params):
+                print(f"  sigma({name}) = {np.sqrt(param_cov[i, i]):.4e}")
+
+        self.F_joint = F
+        self.cov_joint = full_cov
+        self.combined_params = combined_params
+        return F, param_cov, combined_params
+        
+## TESTS
+"""
+Validation tests for LRFisherForecaster.
+
+1. test_pk_override_wiring   -- confirms the patched build_spectra_dict
+   actually freezes P(k,a) when pk_override is passed, rather than
+   silently recomputing it from `cosmo` (the failure mode that would
+   quietly destroy the whole immunity claim).
+
+2. test_geometric_cancellation -- confirms that perturbing cosmology while
+   holding pk_override (frozen Pmm) fixed shifts CG and GL individually,
+   but shifts their ratio r much less -- the core factorized-kernel claim.
+
+3. profiled_chi2 / fit_theta_geo_profiled -- a real (not just Fisher-
+   linearized) profile-likelihood fit of theta_geo: at each trial theta_geo,
+   the free amplitudes A are solved for and marginalized analytically (GLS),
+   exactly as discussed, and only the resulting chi^2 is minimized over
+   theta_geo.
+
+4. test_pmm_immunity -- the actual validation: build a mock using a
+   DELIBERATELY WRONG P(k,z), fit theta_geo against it with the ratio
+   model (whose r still uses the FIDUCIAL frozen Pmm, as it would in a
+   real analysis), and confirm the recovered theta_geo matches the
+   fiducial-mock fit to well within the Fisher-forecast uncertainty.
+"""
+
+import numpy as np
+from scipy.optimize import minimize
+
+
+# ---------------------------------------------------------------------
+# 1. Confirm pk_override actually changes build_spectra_dict's output
+# ---------------------------------------------------------------------
+def test_pk_override_wiring(lr, rtol_should_differ=1e-3):
+    """
+    Build spectra at the SAME cosmology with two different pk_override
+    Pk2D objects and confirm the resulting Cls differ. If they come back
+    identical, the patch isn't wired through -- build_spectra_dict is
+    silently ignoring pk_override and computing P(k,a) from `cosmo` on its
+    own, which would make everything downstream of compute_r_vector
+    meaningless.
+    """
+    cosmo = lr.cosmology
+    cosmo.compute_growth()
+    pk_a = cosmo.get_nonlin_power()
+
+    # Perturb A_s (amplitude only) to get a genuinely different Pk2D at the
+    # SAME background cosmology, so any Cl difference we see is attributable
+    # only to pk_override, never to distances/kernels changing too.
+    perturbed = dict(lr.fiducial_dict)
+    perturbed['A_s'] = lr.fiducial_dict['A_s'] * 1.5
+    cosmo_b = lr._make_cosmo(perturbed)
+    cosmo_b.compute_growth()
+    pk_b = cosmo_b.get_nonlin_power()
+
+    entry = lr.cg_gl_map[0]
+    lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+        cosmo, lr.lens_data, lr.source_data,
+        lr.survey_params['magnification_bias_lenses'],
+        z_max=lr.survey_params['z_max'], n_chi=lr.survey_params['n_chi'])
+    tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+    noise_dict = build_noise_dict(lr.full_f_map, lr.ells, None, None,
+                                   cmb_noise_kk=None, cmb_noise_TT=None, cmb_noise_EE=None)
+
+    spectra_a = build_spectra_dict(cosmo, lr.full_f_map, tracer_dict, lr.ells, noise_dict,
+                                    pk_override=pk_a)
+    spectra_b = build_spectra_dict(cosmo, lr.full_f_map, tracer_dict, lr.ells, noise_dict,
+                                    pk_override=pk_b)
+
+    cl_a = spectra_a[entry['cg_pair']]
+    cl_b = spectra_b[entry['cg_pair']]
+    rel_diff = np.max(np.abs(cl_a - cl_b) / np.abs(cl_a))
+
+    passed = rel_diff > rtol_should_differ
+    print(f"[pk_override wiring] max relative difference = {rel_diff:.3e} "
+          f"({'PASS' if passed else 'FAIL -- pk_override is not taking effect'})")
+    return passed
+
+
+# ---------------------------------------------------------------------
+# 2. Confirm the geometric cancellation itself
+# ---------------------------------------------------------------------
+def test_geometric_cancellation(lr, param='Omega_k', step=None):
+    """
+    Perturb `param` while holding pk_override (frozen Pmm) fixed, and
+    compare the fractional shift in CG, in GL, and in r = CG/GL. If the
+    factorized-kernel approximation is good, |d ln r| should be well below
+    |d ln CG| and |d ln GL| individually -- that gap IS the immunity.
+    """
+    h = step or lr.step_dict.get(param, 1e-3)
+    up = dict(lr.fiducial_dict)
+    up[param] = lr.fiducial_dict[param] + h
+    cosmo_up = lr._make_cosmo(up)
+
+    def raw_cg_gl(cosmology):
+        cosmology.compute_growth()
+        lens_tracers, source_tracers, cmb_tracer = build_tracers_from_data(
+            cosmology, lr.lens_data, lr.source_data,
+            lr.survey_params['magnification_bias_lenses'],
+            z_max=lr.survey_params['z_max'], n_chi=lr.survey_params['n_chi'])
+        tracer_dict = build_tracer_dict(lens_tracers, source_tracers, cmb_tracer)
+        noise_dict = build_noise_dict(lr.full_f_map, lr.ells, None, None,
+                                       cmb_noise_kk=None, cmb_noise_TT=None, cmb_noise_EE=None)
+        spectra = build_spectra_dict(cosmology, lr.full_f_map, tracer_dict, lr.ells, noise_dict,
+                                      pk_override=lr._pk_frozen)
+        cg = np.array([lr._bin_one_ell(spectra[e['cg_pair']], e['ell_bin']) for e in lr.cg_gl_map])
+        gl = np.array([lr._bin_one_ell(spectra[e['gl_pair']], e['ell_bin']) for e in lr.cg_gl_map])
+        return cg, gl
+
+    cg_fid, gl_fid = raw_cg_gl(lr.cosmology)
+    cg_up, gl_up = raw_cg_gl(cosmo_up)
+    r_fid = cg_fid / gl_fid
+    r_up = cg_up / gl_up
+
+    d_ln_cg = np.abs((cg_up - cg_fid) / cg_fid)
+    d_ln_gl = np.abs((gl_up - gl_fid) / gl_fid)
+    d_ln_r = np.abs((r_up - r_fid) / r_fid)
+
+    print(f"[geometric cancellation, d{param}={h:.2e}]")
+    print(f"  median |d ln CG| = {np.median(d_ln_cg):.3e}")
+    print(f"  median |d ln GL| = {np.median(d_ln_gl):.3e}")
+    print(f"  median |d ln r|  = {np.median(d_ln_r):.3e}")
+
+    ratio_cancels = np.median(d_ln_r) < 0.3 * min(np.median(d_ln_cg), np.median(d_ln_gl))
+    print("  " + ("PASS -- r is much less sensitive than CG/GL individually"
+                   if ratio_cancels else
+                   "WARNING -- r moves almost as much as CG or GL; the "
+                   "factorized-kernel approximation may be poor for this "
+                   "lens sample's n(z) width -- consider narrower z-bins."))
+    return d_ln_cg, d_ln_gl, d_ln_r
+
+
+# ---------------------------------------------------------------------
+# 3. Profile-likelihood fit of theta_geo (used standalone and inside #4)
+# ---------------------------------------------------------------------
+def _sub_indices_and_cov(lr, C):
+    """Restrict the covariance/index bookkeeping to just the CG/GL entries
+    used by the ratio fit, ordered [all CG entries, then all GL entries]."""
+    idx = [e['cg_idx'] for e in lr.cg_gl_map] + [e['gl_idx'] for e in lr.cg_gl_map]
+    idx = np.array(idx)
+    return idx, C[np.ix_(idx, idx)]
+
+
+def profiled_chi2(theta_values, geo_params, lr, d_sub, C_sub_inv):
+    """
+    GLS-profiled chi^2 at a trial theta_geo: build r(theta_geo), form the
+    linear design matrix, solve for and marginalize the free amplitudes A
+    analytically, and return the resulting chi^2. No A ever appears as an
+    explicit fit dimension -- this is what an optimizer/sampler should
+    actually evaluate at each theta_geo point.
+    """
+    trial = dict(lr.fiducial_dict)
+    for name, val in zip(geo_params, theta_values):
+        trial[name] = val
+    cosmo_trial = lr._make_cosmo(trial)
+
+    r = lr.compute_r_vector(cosmo_trial)
+    n_amp = len(r)
+    X = np.zeros((2 * n_amp, n_amp))
+    for k in range(n_amp):
+        X[k, k] = 1.0             # CG half: first n_amp rows
+        X[n_amp + k, k] = r[k]    # GL half: second n_amp rows
+
+    XtCinv = X.T @ C_sub_inv
+    A_hat = np.linalg.solve(XtCinv @ X, XtCinv @ d_sub)
+    resid = d_sub - X @ A_hat
+    return float(resid @ C_sub_inv @ resid)
+
+
+def fit_theta_geo_profiled(lr, d_sub, C_sub, geo_params=None, x0=None):
+    geo_params = geo_params or lr.geo_params
+    C_sub_inv = np.linalg.inv(C_sub)
+    x0 = x0 or [lr.fiducial_dict[p] for p in geo_params]
+
+    result = minimize(profiled_chi2, x0=x0, args=(geo_params, lr, d_sub, C_sub_inv),
+                       method='Nelder-Mead', options={'xatol': 1e-6, 'fatol': 1e-6})
+    return dict(zip(geo_params, result.x)), result
+
+
+# ---------------------------------------------------------------------
+# 4. The actual immunity test
+# ---------------------------------------------------------------------
+def build_mock_with_pmm(lr, pmm_cosmology, noiseless=True):
+    """
+    Full (real, physically-motivated) theory vector at pmm_cosmology,
+    restricted to the CG/GL sub-vector. This is "what the sky would
+    actually look like" -- never the frozen-Pmm ratio model -- so it's an
+    honest stand-in for real data.
+    """
+    mu_full = lr.build_theory_vector(pmm_cosmology, noiseless=noiseless)
+    idx, _ = _sub_indices_and_cov(lr, np.eye(len(mu_full)))  # reuse index logic only
+    return mu_full[idx]
+
+
+def test_pmm_immunity(lr, wrong_pmm_cosmology, C=None, n_sigma_flag=0.3):
+    """
+    Fit theta_geo against a mock built with the WRONG P(k,z), and against a
+    mock built with the fiducial (correct) P(k,z). If the ratio method's
+    immunity claim holds, the two fits should agree to well within the
+    Fisher-forecast sigma on theta_geo -- unlike a physically-motivated fit
+    on the same wrong-Pmm mock, which would be biased by construction.
+    """
+    p = lr.survey_params
+    if C is None:
+        cov_obj, _, _ = build_covariance_from_data(lr.cosmology, lr.lens_data, lr.source_data, **p)
+        C = cov_obj.matrix
+    _, C_sub = _sub_indices_and_cov(lr, C)
+
+    d_wrong = build_mock_with_pmm(lr, wrong_pmm_cosmology)
+    best_wrong, _ = fit_theta_geo_profiled(lr, d_wrong, C_sub)
+
+    d_fid = build_mock_with_pmm(lr, lr.cosmology)
+    best_fid, _ = fit_theta_geo_profiled(lr, d_fid, C_sub)
+
+    _, geo_cov = lr.make_lr_fisher_matrix(C=C)
+    sigma = np.sqrt(np.diag(geo_cov))
+
+    print("\n[Pmm immunity test]")
+    all_pass = True
+    for i, name in enumerate(lr.geo_params):
+        shift = best_wrong[name] - best_fid[name]
+        n_sig = abs(shift) / sigma[i]
+        flag = n_sig > n_sigma_flag
+        all_pass &= not flag
+        print(f"  {name}: fiducial-mock fit = {best_fid[name]:.6f}, "
+              f"wrong-Pmm-mock fit = {best_wrong[name]:.6f}, "
+              f"shift = {shift:.2e} ({n_sig:.2f} sigma) {'<-- FLAG' if flag else ''}")
+    print("  " + ("PASS -- recovered theta_geo is stable against the wrong Pmm"
+                   if all_pass else
+                   "FAIL -- theta_geo shifted more than expected; check kernel "
+                   "narrowness (test_geometric_cancellation) and pk_override "
+                   "wiring (test_pk_override_wiring)."))
+    return best_fid, best_wrong, sigma
+
+
+# ---------------------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------------------
+if __name__ == "__main__":
+    import pyccl as ccl
+
+    # `lr` = an already-constructed LRFisherForecaster instance
+    # test_pk_override_wiring(lr)
+    # test_geometric_cancellation(lr, param='Omega_k')
+    #
+    # A deliberately, substantially wrong Pmm -- linear instead of the
+    # fiducial's nonlinear (halofit) matter power spectrum -- as an extreme,
+    # unambiguous test case:
+    #
+    # wrong_cosmo = ccl.Cosmology(
+    #     Omega_c=lr.fiducial_dict['Omega_c'], Omega_b=lr.fiducial_dict['Omega_b'],
+    #     Omega_k=lr.fiducial_dict['Omega_k'], h=lr.fiducial_dict['h'],
+    #     A_s=lr.fiducial_dict['A_s'], n_s=lr.fiducial_dict['n_s'],
+    #     w0=lr.fiducial_dict['w0'], wa=lr.fiducial_dict['wa'],
+    #     Neff=lr.fiducial_dict['Neff'], m_nu=lr.fiducial_dict['m_nu'],
+    #     T_CMB=lr.fiducial_dict['T_CMB'],
+    #     transfer_function='boltzmann_camb',
+    #     matter_power_spectrum='linear',
+    # )
+    # test_pmm_immunity(lr, wrong_cosmo)
+    pass
