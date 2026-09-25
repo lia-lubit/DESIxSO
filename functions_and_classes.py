@@ -22,6 +22,7 @@ from scipy.stats import linregress
 from scipy.integrate import simpson
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import CubicSpline, interp1d
+from scipy.optimize import minimize
 
 # cosmology
 import astropy
@@ -3496,34 +3497,23 @@ class FisherForecaster:
             
         return g
 
-#### CHECK
 #Fisher forecasting using lensing ratio method
 #Idea: For each lens-redshift bin i and ell bin, give the CMB-lensing x galaxy-density
 #spectrum a free amplitude: C_ell^{(g_i, kappa_c)} = A_{i,ell}
-#and predict EVERY paired galaxy-lensing x galaxy-density spectrum -- one per
-#source bin j you choose to pair with lens bin i -- as a geometric multiple of
-#that SAME shared amplitude: C_ell^{(g_i, kappa_g_j)} = r_{i,j,ell}(theta_geo) * A_{i,ell}
+#and predict EVERY paired galaxy-lensing x galaxy-density spectrum as a multiple of
+#that amplitude: C_ell^{(g_i, kappa_g_j)} = r_{i,j,ell}(theta_geo) * A_{i,ell}
 #for each j in lens_to_source_bin[i]. A given lens bin can be paired with one
 #source bin or several; C_ell^{(g_i,kappa_c)} is a single physical measurement,
-#so all of its paired GL spectra share the one amplitude -- pairing against
-#more source bins adds more constraints on the SAME A, not more free A's.
+#so all of its paired GL spectra share the one amplitude
 #r is computed from lensing-kernel integrals with P(k,z) FROZEN at its
 #fiducial shape -- only background distances move with theta_geo. theta_geo is
 #whichever subset of {Omega_m, Omega_k, w0, wa} you have leverage on; growth/
-#amplitude parameters (A_s, sigma8, bias, etc.) never enter -- fully absorbed
-#into the free A_{i,ell}'s.
+#amplitude parameters (A_s, sigma8, bias, etc.) never enter
 #All A_{i,ell} are marginalized with a flat prior the standard Fisher way:
 #include them as ordinary parameters in the joint Fisher matrix, invert, and
 #keep the theta_geo submatrix (Schur complement).
 
-#Built against the actual ForecastMap/CovarianceMatrix/create_simplified_desired_pairs
-#code: 'GL' expands to the full lens-bin x source-bin cross product (any i,j),
-#'CG' to every lens bin, and final_f_map.pair_to_index gives the exact block
-#position build_theory_vector's concatenation uses -- so index lookups here
-#are direct, not guesswork.
-
 ### HOW DO I ADD PRIMARIES -- I WANT TO JUST ADD THEM TO THE DATA VECTOR SO YOU HAVE TO FIT TO BOTH
-#### DOES THIS ASSUME R IS CONSTANT ACROSS ELL VALUES?
 class LRFisherForecaster(FisherForecaster):
 
     def __init__(self, *args, lens_to_source_bin, geo_params=('Omega_k',),
@@ -3536,9 +3526,6 @@ class LRFisherForecaster(FisherForecaster):
             Which background-cosmology parameters make up theta_geo, e.g.
             ('Omega_k',) or ('w0','wa') with Omega_m fixed. H0/h does not
             belong here -- it cancels in r by construction.
-        fiducial_pmm_cosmology : pyccl.Cosmology or None
-            Cosmology used ONLY to freeze P(k,z) for the r calculation.
-            Defaults to self.cosmology. Never re-derived per theta_geo trial.
         """
         super().__init__(*args, **kwargs)
         self.geo_params = list(geo_params)
@@ -3698,11 +3685,11 @@ class LRFisherForecaster(FisherForecaster):
             X[gl['gl_idx'], gl['group_idx']] = r_vector[k]
         return X
 
-    #### CHECK
+    #### IS IT A PROBLEM THAT A COMES FROM THE FIDUCIAL COSMOLOGY
     ## smoothness condiiton for A?
     ## splines?
-    # 6. Joint Fisher matrix over theta_geo + all A_{i,ell}; marginalize A
-    #    via the Schur complement (top-left block of the inverted joint matrix)
+    # Joint Fisher matrix over theta_geo + all A_{i,ell}; marginalize A
+    # via the Schur complement (top-left block of the inverted joint matrix)
     def make_lr_fisher_matrix(self, C=None, finite_diff_step=None, print_summary=False):
         p = self.survey_params
 
@@ -3730,7 +3717,7 @@ class LRFisherForecaster(FisherForecaster):
         # dmu_dtheta is a list of lists
         # dmu_dtheta[i[j]] = derivative of j'th spectra block in mu (certain ell bin, certain spectrum) wrt i'th parameter
         ### right now each A is set by the cosmology, but doesn't factor into the final fisher constraints
-        ### in an MCMC how would we handle A? there we're fitting vectors explicitly so we can't have A have meaning...
+        ### in an MCMC how would we handle A? there we're fitting vectors explicitly so we can't let A have meaning...
         dmu_dtheta = {}
         for param in self.geo_params:
             h = finite_diff_step or self.step_dict.get(param)
@@ -3782,139 +3769,106 @@ class LRFisherForecaster(FisherForecaster):
 
 # ---------------------------------------------------------------------------------------------------------------------------------------#
 
-        # ---------------------------------------------------------------------
-    # Helper: which flat-vector indices belong to the CG/GL sub-vector
-    # ---------------------------------------------------------------------
-    def _sub_indices(lr):
-        cg_idx = [g['cg_idx'] for g in lr.cg_gl_map]
-        gl_idx = [gl['gl_idx'] for gl in lr._gl_flat]   # <-- from _gl_flat, not cg_gl_map
+    def _sub_indices(self):
+        """Determine which flat-vector indices belong to the CG/GL sub-vector."""
+        cg_idx = [g['cg_idx'] for g in self.cg_gl_map]
+        gl_idx = [gl['gl_idx'] for gl in self._gl_flat]
         return np.array(cg_idx + gl_idx)
-    
-    def _sub_indices_and_cov(lr, C):
-        idx = _sub_indices(lr)
+
+    def _sub_indices_and_cov(self, C):
+        """Extract sub-indices and slice the covariance matrix."""
+        idx = self._sub_indices()
         return idx, C[np.ix_(idx, idx)]
-        
-    # ---------------------------------------------------------------------
-    # The profile-likelihood fit: theta_geo is the only thing ever sampled
-    # or optimized over; the shared amplitudes A are solved for exactly
-    # (GLS) and marginalized out analytically at every trial theta_geo.
-    # ---------------------------------------------------------------------
-    def profiled_chi2(theta_values, geo_params, lr, d_sub, C_sub_inv):
+
+    def profiled_chi2(self, theta_values, geo_params, d_sub, C_sub_inv):
         """
         Evaluate the GLS-profiled chi^2 at one trial theta_geo point.
-    
-        Steps:
-          1. Build the trial cosmology (fiducial values, with geo_params
-             overridden by theta_values).
-          2. Compute r(theta_geo) for every lens/source pairing via
-             lr.compute_r_vector -- this is the ONLY place Pmm-independent
-             geometry enters; nothing here ever touches the wrong (or right)
-             Pmm used to build the mock data, only the frozen fiducial one
-             baked into lr.compute_r_vector via lr._pk_frozen.
-          3. Build the linear design matrix X: CG rows get a 1 in their own
-             amplitude's column, GL rows get r in THEIR group's column (so
-             multiple GL rows can share one amplitude column).
-          4. Solve for the amplitudes A_hat that best fit d_sub given X,
-             weighted by the real covariance (ordinary GLS: A_hat =
-             (X^T C^-1 X)^-1 X^T C^-1 d).
-          5. Return the resulting chi^2 of the residual -- this already has
-             every amplitude integrated out, exactly (not approximately),
-             because the model is linear in A and the likelihood is Gaussian.
+        Returns 1e10 if CCL fails to construct a valid background cosmology.
         """
-        trial = dict(lr.fiducial_dict)
-        for name, val in zip(geo_params, theta_values):
-            trial[name] = val
-        cosmo_trial = lr._make_cosmo(trial)
+        # 1. Catch unphysical/invalid cosmological steps during Nelder-Mead sampling
+        try:
+            trial = dict(self.fiducial_dict)
+            for name, val in zip(geo_params, theta_values):
+                trial[name] = val
+            cosmo_trial = self._make_cosmo(trial)
     
-        r = lr.compute_r_vector(cosmo_trial)
-        n_amp = len(lr.cg_gl_map)
-        n_gl = len(lr._gl_flat)
+            # 2. Compute r vector for trial cosmology
+            r = self.compute_r_vector(cosmo_trial)
+        except Exception as e:
+            # Return a large penalty value so Nelder-Mead backs away from invalid regions
+            return 1e10
+    
+        n_amp = len(self.cg_gl_map)
+        n_gl = len(self._gl_flat)
         n_sub = n_amp + n_gl
     
+        # 3. Build design matrix
         X = np.zeros((n_sub, n_amp))
         for g_idx in range(n_amp):
-            X[g_idx, g_idx] = 1.0                # CG rows: first n_amp rows
-        for k, gl in enumerate(lr._gl_flat):
-            X[n_amp + k, gl['group_idx']] = r[k]  # GL rows: rest, r in their group's column
+            X[g_idx, g_idx] = 1.0                # CG rows
+        for k, gl in enumerate(self._gl_flat):
+            X[n_amp + k, gl['group_idx']] = r[k]  # GL rows
     
-        XtCinv = X.T @ C_sub_inv
-        A_hat = np.linalg.solve(XtCinv @ X, XtCinv @ d_sub)
-        resid = d_sub - X @ A_hat
-        return float(resid @ C_sub_inv @ resid)
+        try:
+            XtCinv = X.T @ C_sub_inv
+            A_hat = np.linalg.solve(XtCinv @ X, XtCinv @ d_sub)
+            resid = d_sub - X @ A_hat
+            chi2 = float(resid @ C_sub_inv @ resid)
     
-    
-    def fit_theta_geo_profiled(lr, d_sub, C_sub, geo_params=None, x0=None):
-        """
-        Minimize profiled_chi2 over theta_geo only -- A never appears as an
-        explicit optimization dimension. Nelder-Mead since profiled_chi2 isn't
-        handed analytic gradients; fine for the 1-2 dimensional theta_geo this
-        is meant for.
-        """
-        geo_params = geo_params or lr.geo_params
+            # Ensure chi2 is finite
+            if not np.isfinite(chi2):
+                return 1e10
+            return chi2
+        except np.linalg.LinAlgError:
+            return 1e10
+
+    def fit_theta_geo_profiled(self, d_sub, C_sub, geo_params=None, x0=None):
+        """Minimize profiled_chi2 over theta_geo only."""
+        geo_params = geo_params or self.geo_params
         C_sub_inv = np.linalg.inv(C_sub)
-        x0 = x0 or [lr.fiducial_dict[p] for p in geo_params]
-    
-        result = minimize(profiled_chi2, x0=x0, args=(geo_params, lr, d_sub, C_sub_inv),
-                           method='Nelder-Mead', options={'xatol': 1e-6, 'fatol': 1e-6})
+        x0 = x0 or [self.fiducial_dict[p] for p in geo_params]
+
+        result = minimize(
+            self.profiled_chi2,
+            x0=x0,
+            args=(geo_params, d_sub, C_sub_inv),
+            method='Nelder-Mead',
+            options={'xatol': 1e-6, 'fatol': 1e-6}
+        )
         return dict(zip(geo_params, result.x)), result
-    
-    
-    # ---------------------------------------------------------------------
-    # Build a mock using a given (possibly wrong) matter power spectrum
-    # ---------------------------------------------------------------------
-    def build_mock_with_pmm(lr, pmm_cosmology, noiseless=True):
+
+    def build_mock_with_pmm(self, pmm_cosmology, noiseless=True):
+        """Build mock data vector using Pmm cosmology."""
+        mu_full = self.build_theory_vector(pmm_cosmology, noiseless=noiseless)
+        return mu_full[self._sub_indices()]
+
+    def test_pmm_immunity(self, wrong_pmm_cosmology, C=None, n_sigma_flag=0.3):
         """
-        The FULL, physically-motivated theory vector at pmm_cosmology -- real
-        Pmm, real bias, everything -- restricted down to just the CG/GL rows.
-        This is meant to stand in for "what the sky actually looks like" if
-        pmm_cosmology's matter power spectrum were the true one; noiseless=True
-        means it's the noise-free model prediction, not a noisy draw.
-        """
-        mu_full = lr.build_theory_vector(pmm_cosmology, noiseless=noiseless)
-        return mu_full[_sub_indices(lr)]
-    
-    
-    # ---------------------------------------------------------------------
-    # The actual immunity test
-    # ---------------------------------------------------------------------
-    def test_pmm_immunity(lr, wrong_pmm_cosmology, C=None, n_sigma_flag=0.3):
-        """
-        Core question: if the TRUE matter power spectrum were wrong_pmm_cosmology's
-        (rather than lr.cosmology's fiducial one), would fitting theta_geo with
-        the ratio method still recover the right answer?
-    
         Procedure:
           1. Build (or reuse) the full covariance matrix, restricted to CG/GL.
           2. Build two mocks at the SAME true theta_geo: one using the real
              (fiducial) Pmm, one using the deliberately WRONG Pmm.
-          3. Fit theta_geo against each mock via the profile-likelihood fit
-             above -- note this fit never sees which Pmm generated the mock;
-             it only ever uses the frozen fiducial Pmm inside lr.compute_r_vector
-             to build r, and otherwise reads everything else straight from the
-             mock data itself.
-          4. Compare the two fitted theta_geo values. If the ratio method's
-             immunity claim holds, they should agree to well within the
-             Fisher-forecasted sigma on theta_geo -- a real, biased fit would
-             instead show a shift many sigma large.
+          3. Fit theta_geo against each mock via the profile-likelihood fit.
+          4. Compare the two fitted theta_geo values.
         """
-        p = lr.survey_params
+        p = self.survey_params
         if C is None:
-            cov_obj, _, _ = build_covariance_from_data(lr.cosmology, lr.lens_data, lr.source_data, **p)
+            cov_obj, _, _ = build_covariance_from_data(self.cosmology, self.lens_data, self.source_data, **p)
             C = cov_obj.matrix
-        _, C_sub = _sub_indices_and_cov(lr, C)
-    
-        d_wrong = build_mock_with_pmm(lr, wrong_pmm_cosmology)
-        best_wrong, _ = fit_theta_geo_profiled(lr, d_wrong, C_sub)
-    
-        d_fid = build_mock_with_pmm(lr, lr.cosmology)
-        best_fid, _ = fit_theta_geo_profiled(lr, d_fid, C_sub)
-    
-        _, geo_cov = lr.make_lr_fisher_matrix(C=C)
+        _, C_sub = self._sub_indices_and_cov(C)
+
+        d_wrong = self.build_mock_with_pmm(wrong_pmm_cosmology)
+        best_wrong, _ = self.fit_theta_geo_profiled(d_wrong, C_sub)
+
+        d_fid = self.build_mock_with_pmm(self.cosmology)
+        best_fid, _ = self.fit_theta_geo_profiled(d_fid, C_sub)
+
+        _, geo_cov = self.make_lr_fisher_matrix(C=C)
         sigma = np.sqrt(np.diag(geo_cov))
-    
+
         print("\n[Pmm immunity test]")
         all_pass = True
-        for i, name in enumerate(lr.geo_params):
+        for i, name in enumerate(self.geo_params):
             shift = best_wrong[name] - best_fid[name]
             n_sig = abs(shift) / sigma[i]
             flag = n_sig > n_sigma_flag
@@ -3928,15 +3882,7 @@ class LRFisherForecaster(FisherForecaster):
                        "narrowness and pk_override wiring."))
         return best_fid, best_wrong, sigma
 
-    # ------------------------------------------------------------------
-    # 6.5. Lean mu-only derivatives: same 5-point stencil as the parent
-    #    class's get_derivatives, but skips the covariance stencil (4 extra
-    #    build_covariance_from_data calls per parameter) entirely, since
-    #    make_joint_fisher_matrix never uses C_derivatives. With
-    #    cmb_primaries=True this roughly halves runtime -- each of those
-    #    discarded covariance-derivative evaluations was triggering a full
-    #    CAMB primary-spectrum run for nothing.
-    # ------------------------------------------------------------------
+    # mu only derivatives (since were ignoring covariance derivatives for now)
     def get_mu_derivatives_only(self, desired_params):
         mu_derivatives = {}
         for param in desired_params:
@@ -3954,11 +3900,7 @@ class LRFisherForecaster(FisherForecaster):
             mu_derivatives[param] = (-mu_up2 + 8.0 * mu_up1 - 8.0 * mu_dn1 + mu_dn2) / (12.0 * step)
         return mu_derivatives
 
-    # ------------------------------------------------------------------
-    # 7. Joint fit with CMB primaries (TT/EE/ET). Requires this forecaster
-    #    to have been built with desired_spectra including 'CG','GL', and
-    #    whichever of 'TT'/'EE'/'ET' you want, plus cmb_primaries=True.
-    # ------------------------------------------------------------------
+    # check that primaries are in f_map
     def _primary_pairs_present(self):
         candidates = [('E', 'E'), ('T', 'T'), ('E', 'T')]
         return [pair for pair in candidates if pair in self.final_f_map.pair_to_index]
@@ -4045,14 +3987,14 @@ class LRFisherForecaster(FisherForecaster):
             cls_dn1 = self._compute_primary_cls(self._make_cosmo(p_dn1))
             cls_dn2 = self._compute_primary_cls(self._make_cosmo(p_dn2))
 
-            chunks = []
+            slices = []
             for pair in pairs_used:
                 b_up1 = self._bin_all_ells(cls_up1[pair])
                 b_up2 = self._bin_all_ells(cls_up2[pair])
                 b_dn1 = self._bin_all_ells(cls_dn1[pair])
                 b_dn2 = self._bin_all_ells(cls_dn2[pair])
-                chunks.append((-b_up2 + 8 * b_up1 - 8 * b_dn1 + b_dn2) / (12.0 * step))
-            mu_derivatives[param] = np.concatenate(chunks)
+                slices.append((-b_up2 + 8 * b_up1 - 8 * b_dn1 + b_dn2) / (12.0 * step))
+            mu_derivatives[param] = np.concatenate(slices)
         return mu_derivatives
 
     def make_joint_fisher_matrix(self, primary_params, C=None,
